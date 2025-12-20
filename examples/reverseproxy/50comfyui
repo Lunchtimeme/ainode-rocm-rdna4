@@ -7,6 +7,8 @@ server {
 
 	server_name comfyui comfyui.localdomain;
 
+	client_max_body_size 1G;
+
 	proxy_buffering off;
 
 	# ComfyUI
@@ -14,15 +16,17 @@ server {
 		resolver 127.0.0.11 valid=30s;
 		proxy_bind $server_addr;
 		proxy_pass http://ainode-comfyui:8188;
+	}
 
-		# Add WebSocket support
+	# WebSocket support
+	location /ws {
+		proxy_pass http://ainode-comfyui:8188;
 		proxy_http_version 1.1;
 		proxy_set_header Upgrade $http_upgrade;
 		proxy_set_header Connection "upgrade";
-
-		# Timeouts for WebSocket connections
-		proxy_read_timeout 60s;
-		proxy_send_timeout 60s;
+		proxy_set_header Host $host;
+		proxy_set_header X-Real-IP $remote_addr;
+		proxy_read_timeout 86400;
 	}
 }
 

@@ -7,6 +7,8 @@ server {
 
 	server_name openwebui openwebui.localdomain;
 
+	client_max_body_size 1G;
+
 	proxy_buffering off;
 
 	# Open WebUI
@@ -21,8 +23,7 @@ server {
 		proxy_set_header Connection "upgrade";
 
 		# Timeouts for WebSocket connections
-		proxy_read_timeout 60s;
-		proxy_send_timeout 60s;
+		proxy_read_timeout 86400;
 	}
 }
 

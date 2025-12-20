@@ -201,37 +201,6 @@ services:
         tmpfs:
           mode: 01777
 
-  # Open WebUI - Amnesic (WebUI, API)
-  openwebui-amnesic:
-    <<: *common-render
-    build:
-      args:
-        # UID and GID for the user, can be the same as for the local user
-        USER_UID: 1000
-        USER_GID: 100
-      dockerfile: ./docker/openwebui-amnesic/Dockerfile
-    container_name: ainode-openwebui-amnesic
-    hostname: ainode-openwebui-amnesic
-    networks:
-      - ainode-internal
-    ports:
-      - 8443:8080
-    restart: unless-stopped
-    volumes:
-      - ./ssl:/home/user/app/ssl
-      - type: tmpfs
-        target: /home/user/.cache
-        tmpfs:
-          mode: 01777
-      - type: tmpfs
-        target: /home/user/app/backend/data
-        tmpfs:
-          mode: 01777
-      - type: tmpfs
-        target: /tmp
-        tmpfs:
-          mode: 01777
-
 networks:
   ainode-internal:
     driver: bridge

@@ -16,7 +16,7 @@ A privacy-focused approach is implemented as follows:
 
 This repository contains Docker configuration files for setting up the following components:
 
-*   **Open WebUI:** A versatile web interface for interacting with various AI models. Includes both the default and amnesic (forgetful) instances.
+*   **Open WebUI:** A versatile web interface for interacting with various AI models.
 *   **Ollama:** A backend for Large Language Models (LLMs), providing a simple and efficient way to run and manage models.
 *   **ComfyUI:** A node-based UI for Stable Diffusion, allowing for complex workflows and customization.
 *   **ChromaDB:** A vector database for storing and retrieving embeddings, enabling efficient retrieval-augmented generation (RAG).

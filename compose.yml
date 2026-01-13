@@ -1,37 +1,83 @@
-### AINode app
+# ==============================================================================
+# AINode - Docker Compose Configuration
+# ==============================================================================
+# AI services stack including:
+#   - ComfyUI:      Image/video generation with ROCm GPU support
+#   - Ollama:       LLM inference with ROCm GPU support
+#   - Open WebUI:   Web interface for Ollama
+#   - ChromaDB:     Vector database for RAG
+#   - Kokoro:       Text-to-Speech API
+#   - nginx:        Reverse proxy with SSL termination
+#
+# Prerequisites:
+#   Before running docker-compose, build the base image:
+#   $ docker build -t ainode-base:python313 ./docker/base
+#
+# Usage:
+#   $ docker-compose build    # Build all service images
+#   $ docker-compose up -d    # Start all services
+#   $ docker-compose logs -f  # Follow logs
+# ==============================================================================
+
 name: ainode
 
-## Common part for all the containers
-x-common: &common
-    logging:
-      driver: none
+# ==============================================================================
+# Common configuration templates
+# ==============================================================================
 
-## Common part for all the containers requiring access to GPU
+# Base configuration for all containers
+x-common: &common
+  logging:
+    driver: none
+  restart: unless-stopped
+
+# Configuration for containers requiring GPU access (AMD ROCm)
 x-common-render: &common-render
-    devices:
-      - /dev/kfd
-      - /dev/dri
-    logging:
-      driver: none
+  <<: *common
+  devices:
+    - /dev/kfd      # ROCm kernel interface
+    - /dev/dri      # Direct Rendering Infrastructure
+
+# Common build args for user/group ID matching
+x-build-args-user: &build-args-user
+  USER_UID: 1000
+  USER_GID: 100
+
+# Common build args for GPU group access (Gentoo defaults)
+x-build-args-gpu: &build-args-gpu
+  <<: *build-args-user
+  RENDER_GID: 28    # Host's render group GID
+  VIDEO_GID: 27     # Host's video group GID
+
+# ==============================================================================
+# Services
+# ==============================================================================
 
 services:
 
-  # ChromaDB
+  # ============================================================================
+  # ChromaDB - Vector Database
+  # ============================================================================
+  # Stores embeddings for RAG (Retrieval-Augmented Generation).
+  # Used by Open WebUI for document search and retrieval.
+  # ============================================================================
   chroma:
     <<: *common
     build:
-      args:
-        # UID and GID for the user, can be the same as for the local user
-        USER_UID: 1000
-        USER_GID: 100
+      context: .
       dockerfile: ./docker/chroma/Dockerfile
+      args:
+        <<: *build-args-user
+        CHROMADB_VERSION: "0.6.3"
+        REBUILD_HNSWLIB: "false"
     container_name: ainode-chroma
     hostname: ainode-chroma
     networks:
       - ainode-internal
-    restart: unless-stopped
     volumes:
+      # Persistent vector storage
       - ./data/chroma:/home/user/app/chroma
+      # Temporary storage (not persisted)
       - type: tmpfs
         target: /home/user/.cache
         tmpfs:
@@ -41,28 +87,30 @@ services:
         tmpfs:
           mode: 01777
 
-  # ComfyUI (WebUI, API)
+  # ============================================================================
+  # ComfyUI - Image/Video Generation
+  # ============================================================================
+  # AI image and video generation backend with ROCm GPU acceleration.
+  # Provides the API for the ComfyChair Android application.
+  # ============================================================================
   comfyui:
     <<: *common-render
     build:
-      args:
-        # UID and GID for the user, can be the same as for the local user
-        USER_UID: 1000
-        USER_GID: 100
-        # Host's GID of the 'render' group, on Gentoo it's 28
-        RENDER_GID: 28
-        # Host's GID of the 'video' group, on Gentoo it's 27
-        VIDEO_GID: 27
+      context: .
       dockerfile: ./docker/comfyui/Dockerfile
+      args:
+        <<: *build-args-gpu
     container_name: ainode-comfyui
     hostname: ainode-comfyui
     networks:
       - ainode-internal
-    restart: unless-stopped
     volumes:
+      # Persistent user data and custom nodes
       - ./data/comfyui/user:/home/user/app/user
       - ./data/comfyui/custom_nodes:/home/user/app/custom_nodes
+      # Shared models directory (can be used by multiple services)
       - ./data/common/models:/home/user/app/models
+      # Temporary storage (not persisted)
       - type: tmpfs
         target: /home/user/.cache
         tmpfs:
@@ -80,25 +128,23 @@ services:
         tmpfs:
           mode: 01777
 
-  # Kokoro FastAPI (API)
+  # ============================================================================
+  # Kokoro FastAPI - Text-to-Speech
+  # ============================================================================
+  # High-quality voice synthesis API using the Kokoro TTS model.
+  # ============================================================================
   kokoro-fastapi:
     <<: *common-render
     build:
-      args:
-        # UID and GID for the user, can be the same as for the local user
-        USER_UID: 1000
-        USER_GID: 100
-        # Host's GID of the 'render' group, on Gentoo it's 28
-        RENDER_GID: 28
-        # Host's GID of the 'video' group, on Gentoo it's 27
-        VIDEO_GID: 27
+      context: .
       dockerfile: ./docker/kokoro-fastapi/Dockerfile
+      args:
+        <<: *build-args-gpu
     container_name: ainode-kokoro-fastapi
     hostname: ainode-kokoro-fastapi
     networks:
       - ainode-internal
-    restart: unless-stopped
-    # Ugly workaround, adding options to tmpfs mount is allowed only for short format
+    # tmpfs with exec permission (required for some operations)
     tmpfs:
       - /tmp:exec
     volumes:
@@ -111,29 +157,30 @@ services:
         tmpfs:
           mode: 01777
 
-  # Ollama (API)
+  # ============================================================================
+  # Ollama - LLM Inference
+  # ============================================================================
+  # Large Language Model inference server with ROCm GPU acceleration.
+  # Provides the LLM backend for Open WebUI.
+  # ============================================================================
   ollama:
     <<: *common-render
     build:
-      args:
-        # UID and GID for the user, can be the same as for the local user
-        USER_UID: 1000
-        USER_GID: 100
-        # Host's GID of the 'render' group, on Gentoo it's 28
-        RENDER_GID: 28
-        # Host's GID of the 'video' group, on Gentoo it's 27
-        VIDEO_GID: 27
+      context: .
       dockerfile: ./docker/ollama/Dockerfile
+      args:
+        <<: *build-args-gpu
     container_name: ainode-ollama
     hostname: ainode-ollama
     networks:
       - ainode-internal
-    restart: unless-stopped
-    # The only way to set 'exec' on tmpfs is to use old syntax
+    # tmpfs with exec permission (required by Ollama)
     tmpfs:
       - /home/user/tmp:exec,mode=01777
     volumes:
+      # Persistent model storage
       - ./data/ollama:/home/user/.ollama
+      # Temporary storage
       - type: tmpfs
         target: /home/user/.cache
         tmpfs:
@@ -143,52 +190,29 @@ services:
         tmpfs:
           mode: 01777
 
-  # Revese Proxy (nginx)
-  reverseproxy:
-    <<: *common
-    build:
-      dockerfile: ./docker/reverseproxy/Dockerfile
-    container_name: ainode-reverseproxy
-    depends_on:
-      - ollama
-      - comfyui
-      - openwebui
-    hostname: ainode-reverseproxy
-    networks:
-      - ainode-internal
-    ports:
-      - 80:80
-      - 443:443
-      - 5000:5000
-      - 11434:11434
-    restart: unless-stopped
-    volumes:
-      - ./data/reverseproxy/sites-enabled:/etc/nginx/sites-enabled
-      - ./data/reverseproxy/htpasswd:/etc/nginx/htpasswd
-      - ./ssl:/etc/nginx/certs
-      - type: tmpfs
-        target: /tmp
-        tmpfs:
-          mode: 01777
-
-  # Open WebUI (WebUI, API)
+  # ============================================================================
+  # Open WebUI - Chat Interface
+  # ============================================================================
+  # Web interface for interacting with Ollama and other LLM backends.
+  # Includes RAG capabilities with ChromaDB integration.
+  # ============================================================================
   openwebui:
     <<: *common-render
     build:
-      args:
-        # UID and GID for the user, can be the same as for the local user
-        USER_UID: 1000
-        USER_GID: 100
+      context: .
       dockerfile: ./docker/openwebui/Dockerfile
+      args:
+        <<: *build-args-user
     container_name: ainode-openwebui
+    hostname: ainode-openwebui
     depends_on:
       - chroma
-    hostname: ainode-openwebui
     networks:
       - ainode-internal
-    restart: unless-stopped
     volumes:
+      # Persistent data (database, uploads, etc.)
       - ./data/openwebui/data:/home/user/app/backend/data
+      # Temporary storage
       - type: tmpfs
         target: /home/user/.cache
         tmpfs:
@@ -201,6 +225,46 @@ services:
         target: /tmp
         tmpfs:
           mode: 01777
+
+  # ============================================================================
+  # Reverse Proxy (nginx)
+  # ============================================================================
+  # Routes external traffic to internal services.
+  # Provides SSL termination and basic authentication.
+  # ============================================================================
+  reverseproxy:
+    <<: *common
+    build:
+      context: .
+      dockerfile: ./docker/reverseproxy/Dockerfile
+    container_name: ainode-reverseproxy
+    hostname: ainode-reverseproxy
+    depends_on:
+      - ollama
+      - comfyui
+      - openwebui
+    networks:
+      - ainode-internal
+    ports:
+      - "80:80"       # HTTP
+      - "443:443"     # HTTPS
+      - "5000:5000"   # Additional service
+      - "11434:11434" # Ollama API
+    volumes:
+      # nginx configuration (virtual hosts)
+      - ./data/reverseproxy/sites-enabled:/etc/nginx/sites-enabled
+      # Basic auth password files
+      - ./data/reverseproxy/htpasswd:/etc/nginx/htpasswd
+      # SSL certificates
+      - ./ssl:/etc/nginx/certs
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          mode: 01777
+
+# ==============================================================================
+# Networks
+# ==============================================================================
 
 networks:
   ainode-internal:

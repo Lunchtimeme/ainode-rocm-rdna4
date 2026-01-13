@@ -43,28 +43,44 @@ Follow these steps to get your AINode stack up and running:
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/legal-hkr/ainode-rocm.git ainode
+    cd ainode
     ```
     This command will download the repository to your local machine. Make sure you have Git installed.
 
 2.  **Create the data directory structure:**
     ```bash
-    mkdir -p data/{chroma,comfyui/config,comfyui/custom_nodes,common/models,desktop/home,desktop/home_i3,ollama,openwebui/data,reverseproxy/sites_enabled} ssl
+    mkdir -p data/{chroma,comfyui/user,comfyui/custom_nodes,common/models,desktop/home,desktop/home_i3,ollama,openwebui/data,reverseproxy/htpasswd,reverseproxy/sites_enabled} ssl
     ```
 
 3.  **Place SSL certificates:**
     Copy the `ainode.crt` and `ainode.key` files into the `ssl` directory. These files are used for secure communication via HTTPS. You can generate your own self-signed certificates or use a certificate from a trusted Certificate Authority (CA), example on how to do that can be found in the `examples/ssl` directory.
 
-4.  **Review and configure Docker Compose files:**
+4.  **Create Basic Auth credentials for ComfyUI:**
+    ```bash
+    cd data/reverseproxy/htpasswd
+    printf "USERNAME:$(openssl passwd -apr1)\n" >> .htpasswd
+    cd ../../../
+    ```
+    Replace `USERNAME` with your desired username. You'll be prompted to enter the password.
+
+5.  **Review and configure Docker Compose files:**
     The `compose.yml` file defines the services (containers) that make up the stack and how they interact. The `Dockerfile` files in `docker/*` directories contain instructions for building the Docker images for each service. Examine the `compose.yml` and `Dockerfile` files to understand the stack's configuration, mainly the reverse proxy configuration in the `data/reverseproxy/sites-enabled` directory. Some examples can be found in the `examples/reverseproxy` directory. You should also set UIDs and GIDs in the `compose.yml` according to your environment. Also, make sure that `ENABLE_SIGNUP` in the `docker/openwebui/Dockerfile` is initially set to `true` so you can create the admin account. You can change it to `false` afterwards.
 
-5.  **Build and run the stack:**
+6.  **Build and run the stack:**
     Navigate to the repository directory and start the Docker containers:
     ```bash
-    cd ainode && docker compose up -d
+    # 1. Build the base image first (required)
+    docker build -t ainode-base:python313 ./docker/base
+
+    # 2. Build all services
+    docker compose build
+
+    # 3. Start the stack
+    docker compose up -d
     ```
     The `-d` flag runs the containers in detached mode (in the background). It is highly suggested to run the stack without `-d` at first to monitor the startup process.
 
-6.  **Access the interfaces:**
+7.  **Access the interfaces:**
     *   The standard Open WebUI interface will be accessible via port `443` (HTTPS).
     *   The Amnesic Open WebUI interface will be accessible via port `8443` (HTTPS).
     *   The Ollama API will be accessible on the standard port `11434`.

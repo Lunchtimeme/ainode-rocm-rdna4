@@ -1,110 +1,170 @@
-FROM archlinux
+# ==============================================================================
+# Open WebUI Container
+# ==============================================================================
+# Web interface for interacting with Ollama and other LLM backends.
+# Provides chat interface, RAG capabilities, and document processing.
+#
+# Features:
+#   - Open WebUI with Ollama integration
+#   - ChromaDB for vector storage (external service)
+#   - Whisper for speech-to-text
+#   - RAG with configurable embedding models
+#   - Multi-stage build for smaller final image
+#
+# Build stages:
+#   1. frontend-builder: Builds the SvelteKit frontend
+#   2. runtime: Final image with backend and pre-built frontend
+#
+# Build args:
+#   USER_UID - UID for the container user (default: 1000)
+#   USER_GID - GID for the users group (default: 100)
+# ==============================================================================
 
-ARG USER_UID
-ARG USER_GID
+# ==============================================================================
+# Stage 1: Frontend Builder
+# ==============================================================================
+# Builds the SvelteKit frontend. This stage is discarded after build,
+# keeping npm and node_modules out of the final image.
+# ==============================================================================
+FROM archlinux AS frontend-builder
 
-# Settings
+# Install Node.js for frontend build
+RUN pacman -Syu --noconfirm \
+    && pacman -S --noconfirm git npm \
+    && rm -rf /var/cache/pacman/pkg/*
+
+WORKDIR /build
+
+# Clone and build frontend
+RUN git clone --depth 1 https://github.com/open-webui/open-webui.git . \
+    # "--force" workaround for dependency resolution issue
+    # See: https://github.com/open-webui/open-webui/issues/15880
+    && npm ci --force \
+    && npm run build
+
+
+# ==============================================================================
+# Stage 2: Runtime
+# ==============================================================================
+# Final image with Python backend and pre-built frontend assets.
+# ==============================================================================
+FROM ainode-base:python313 AS runtime
+
+# ------------------------------------------------------------------------------
+# Build arguments
+# ------------------------------------------------------------------------------
+ARG USER_UID=1000
+ARG USER_GID=100
+
+# ------------------------------------------------------------------------------
+# Open WebUI environment configuration
+# ------------------------------------------------------------------------------
 ENV ENV="prod"
 ENV WEBUI_SECRET_KEY=""
+
+# Model storage paths
 ENV HF_HOME="/home/user/app/backend/data/embedding/models"
 ENV SENTENCE_TRANSFORMERS_HOME="/home/user/app/backend/data/embedding/models"
+
+# Tokenizer settings
 ENV TIKTOKEN_ENCODING_NAME="cl100k_base"
 ENV TIKTOKEN_CACHE_DIR="/home/user/app/backend/data/cache/tiktoken"
 
-## LLM Backend
+# LLM Backend (Ollama)
 ENV OLLAMA_BASE_URL="http://ainode-ollama:11434"
 ENV OPENAI_API_BASE_URL=""
 ENV OPENAI_API_KEY=""
 
-## Telemetry, mostly for dependencies
+# Disable telemetry
 ENV SCARF_NO_ANALYTICS="true"
 ENV DO_NOT_TRACK="true"
 ENV ANONYMIZED_TELEMETRY="false"
 
-## Whisper
+# Whisper speech-to-text settings
 ENV WHISPER_MODEL="base"
 ENV WHISPER_MODEL_DIR="/home/user/app/backend/data/whisper/models"
 
-## RAG
-#ENV RAG_EMBEDDING_ENGINE="http://ainode-ollama:11434"
+# RAG configuration
 ENV RAG_EMBEDDING_MODEL="sdadas/stella-pl-retrieval"
 ENV RAG_RERANKING_MODEL="sdadas/polish-reranker-roberta-v2"
 
-## ChromaDB, we're going to use separate instance of ChromaDB
+# ChromaDB connection (external service)
 ENV CHROMA_HTTP_HOST="ainode-chroma"
 ENV CHROMA_HTTP_PORT="8000"
 ENV CHROMA_HTTP_HEADERS="User-Agent=OpenWebUI"
 ENV CHROMA_HTTP_SSL=false
 
-## Disable authentication
+# Authentication settings
 ENV DEFAULT_USER_ROLE="admin"
 ENV ENABLE_SIGNUP="false"
 ENV WEBUI_AUTH="true"
 
-WORKDIR /home/user/app
-
-# Fix GIDs for groups to match host
-RUN groupmod -g ${USER_GID} users
-
-# Add a user
-RUN useradd -u ${USER_UID} -r -g users -s /sbin/nologin -m -c "User" user
-
-# Install dependencies
-RUN pacman -Syu --noconfirm && pacman -S --noconfirm apache base-devel ffmpeg git npm pkgconf sqlite sudo vim
-
-# Allow user to build packages from AUR
-RUN echo "user ALL=(ALL) NOPASSWD: /usr/bin/pacman" >> /etc/sudoers
-
-# Prepare the runtime environment
-RUN chown -R user:users /home/user
-
-# Prepare directory for AUR
-RUN mkdir -p /home/user/aur
-RUN chown user:users /home/user/aur
-USER user
-
-## Install Python 3.13
-WORKDIR /home/user/aur/python313
-RUN git clone https://aur.archlinux.org/python313.git /home/user/aur/python313
-RUN makepkg -si --noconfirm
-
-# Cleanup
-WORKDIR /home/user/app
-RUN rm -rf /home/user/aur
-
-# Make python3.13 the default python (requires root)
+# ------------------------------------------------------------------------------
+# System packages
+# ------------------------------------------------------------------------------
 USER root
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python3
+RUN pacman -Syu --noconfirm \
+    && pacman -S --noconfirm \
+        apache \
+        ffmpeg \
+        sqlite \
+    # Ensure app directory has correct ownership
+    && chown -R user:users /home/user/app \
+    # Clean package cache
+    && rm -rf /var/cache/pacman/pkg/* \
+    && rm -rf /var/lib/pacman/sync/*
+
+# ------------------------------------------------------------------------------
+# Open WebUI installation
+# ------------------------------------------------------------------------------
 USER user
+WORKDIR /home/user/app
 
-# Get Open WebUI
-RUN git clone https://github.com/open-webui/open-webui /home/user/app
+# Clone repository (backend code only, frontend comes from builder stage)
+RUN git clone --depth 1 https://github.com/open-webui/open-webui.git .
 
-# Even with anonymized telemetry disabled, set the user_id to zeros, just in case
-RUN mkdir -p /home/user/app/.cache/chroma
-RUN echo -n 00000000-0000-0000-0000-000000000000 > /home/user/app/.cache/chroma/telemetry_user_id
+# Disable telemetry user ID (set to zeros even with telemetry disabled)
+RUN mkdir -p .cache/chroma \
+    && echo -n 00000000-0000-0000-0000-000000000000 > .cache/chroma/telemetry_user_id
 
-# Prepare Python virtual environment
-RUN python -m venv /home/user/venv
-ENV PATH="/home/user/venv/bin:${PATH}"
-RUN pip install virtualenv --no-cache-dir
-RUN pip install --upgrade pip setuptools GitPython --no-cache-dir
+# ------------------------------------------------------------------------------
+# Python dependencies
+# ------------------------------------------------------------------------------
+# PyTorch CPU-only (Open WebUI doesn't need GPU for inference)
+RUN pip install --no-cache-dir \
+    torch \
+    torchvision \
+    torchaudio \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# Fix rapidocr-onnxruntime version matching issue
+RUN sed -i 's/rapidocr-onnxruntime==1.4.4/rapidocr-onnxruntime/g' backend/requirements.txt
 
 # Install backend dependencies
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
-## Fix matching distribution error for rapidocr-onnxruntime
-RUN sed -i 's/rapidocr-onnxruntime==1.4.4/rapidocr-onnxruntime/g' /home/user/app/backend/requirements.txt
-RUN pip install -r /home/user/app/backend/requirements.txt --no-cache-dir
-## Fix audioop missing (deprecated as of Python 3.13), see https://github.com/jiaaro/pydub/issues/725#issuecomment-2439291764
-RUN pip install audioop-lts hf_xet --no-cache-dir
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+# Fix for Python 3.13: audioop module deprecated
+# See: https://github.com/jiaaro/pydub/issues/725#issuecomment-2439291764
+RUN pip install --no-cache-dir audioop-lts hf_xet
+
+# ------------------------------------------------------------------------------
+# Pre-download models (reduces first-run time)
+# ------------------------------------------------------------------------------
+# Download embedding model for RAG
 RUN python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['RAG_EMBEDDING_MODEL'], device='cpu')"
+
+# Download Whisper model for speech-to-text
 RUN python -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.environ['WHISPER_MODEL'], device='cpu', compute_type='int8', download_root=os.environ['WHISPER_MODEL_DIR'])"
+
+# Download tiktoken encoding
 RUN python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"
 
-# Build frontend
-## "--force" is a workaround for the dependency resolving issue, see https://github.com/open-webui/open-webui/issues/15880
-RUN npm ci --force
-RUN npm run build
+# ------------------------------------------------------------------------------
+# Copy pre-built frontend from builder stage
+# ------------------------------------------------------------------------------
+COPY --from=frontend-builder --chown=user:users /build/build ./build
 
+# ------------------------------------------------------------------------------
+# Container startup
+# ------------------------------------------------------------------------------
 CMD ["sh", "./backend/start.sh"]

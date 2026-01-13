@@ -1,101 +1,126 @@
-FROM archlinux
+# ==============================================================================
+# Kokoro FastAPI Container
+# ==============================================================================
+# Text-to-Speech API server using the Kokoro TTS model.
+# Provides high-quality voice synthesis via a FastAPI interface.
+#
+# Features:
+#   - Kokoro TTS model with FastAPI wrapper
+#   - ROCm GPU support (configurable via DEVICE env)
+#   - UV package manager for fast dependency resolution
+#   - Optional model pre-download during build
+#
+# Build args:
+#   RENDER_GID - Host's render group GID (for GPU access)
+#   VIDEO_GID  - Host's video group GID (for GPU access)
+#
+# Environment:
+#   DEVICE         - Target device: "gpu" or "cpu" (default: cpu)
+#   DOWNLOAD_MODEL - Pre-download voice model during build (default: true)
+# ==============================================================================
 
-ARG USER_UID
-ARG USER_GID
-ARG RENDER_GID
-ARG VIDEO_GID
+FROM ainode-base:python313
 
-# Set the target device (gpu|cpu)
+# ------------------------------------------------------------------------------
+# Build arguments
+# ------------------------------------------------------------------------------
+ARG RENDER_GID=28
+ARG VIDEO_GID=27
+
+# ------------------------------------------------------------------------------
+# Kokoro FastAPI environment configuration
+# ------------------------------------------------------------------------------
+# Device configuration (gpu|cpu)
 ENV DEVICE="cpu"
 ENV USE_GPU="false"
 
-# Kokoro FastAPI specific
+# Python settings for containerized execution
 ENV PYTHONUNBUFFERED="1"
 ENV PYTHONPATH="/home/user/app:/home/user/app/api"
+
+# UV package manager settings
 ENV UV_LINK_MODE="copy"
 
-# Decide if you want to download the voice model during installation
+# Model download control - set to "false" to skip model download during build
 ENV DOWNLOAD_MODEL="true"
 
-WORKDIR /home/user/app
-
-# Fix GIDs for groups to match host
-RUN groupmod -g ${USER_GID} users
-RUN groupmod -g ${RENDER_GID} render
-RUN groupmod -g ${VIDEO_GID} video
-
-# Add a user
-RUN useradd -u ${USER_UID} -r -g users -G render,video -s /sbin/nologin -m -c "User" user
-
-# Install dependencies
-RUN pacman -Syu --noconfirm && pacman -S --noconfirm base-devel espeak-ng ffmpeg git rocm-core sudo vim
-
-# Update paths to include ROCm
+# ROCm paths (used when DEVICE=gpu)
 ENV ROCM_PATH="/opt/rocm"
 ENV PATH="${PATH}:/opt/rocm/bin"
 
-# Allow user to build packages from AUR
-RUN echo "user ALL=(ALL) NOPASSWD: /usr/bin/pacman" >> /etc/sudoers
+# ------------------------------------------------------------------------------
+# System packages and GPU group setup
+# ------------------------------------------------------------------------------
+USER root
+RUN pacman -Syu --noconfirm \
+    && pacman -S --noconfirm \
+        espeak-ng \
+        ffmpeg \
+        rocm-core \
+    # Fix GPU group GIDs to match host
+    && groupmod -g ${RENDER_GID} render \
+    && groupmod -g ${VIDEO_GID} video \
+    # Add user to GPU groups
+    && usermod -aG render,video user \
+    # Kokoro has hardcoded /app path in some places - create symlink as workaround
+    && ln -s /home/user/app /app \
+    # Ensure app directory has correct ownership
+    && chown -R user:users /home/user/app \
+    # Clean package cache
+    && rm -rf /var/cache/pacman/pkg/* \
+    && rm -rf /var/lib/pacman/sync/*
 
-# Prepare the runtime environment
-RUN chown -R user:users /home/user
-
-# Prepare directory for AUR
-RUN mkdir -p /home/user/aur
-RUN chown user:users /home/user/aur
+# ------------------------------------------------------------------------------
+# Kokoro FastAPI installation
+# ------------------------------------------------------------------------------
 USER user
-
-## Install Python 3.13
-WORKDIR /home/user/aur/python313
-RUN git clone https://aur.archlinux.org/python313.git /home/user/aur/python313
-RUN makepkg -si --noconfirm
-
-# Cleanup
 WORKDIR /home/user/app
-RUN rm -rf /home/user/aur
 
-# Make python3.13 the default python (requires root)
-USER root
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python3
-USER user
+# Clone repository and set up scripts
+RUN git clone --depth 1 https://github.com/remsky/Kokoro-FastAPI.git . \
+    && cp docker/scripts/* ./ \
+    && chmod +x ./*.sh
 
-# Kokoro has somewhere hardcoded path to the app, temporary workaround
-USER root
-RUN ln -s /home/user/app /app
-USER user
+# ------------------------------------------------------------------------------
+# Dependency fixes for Python 3.13 compatibility
+# ------------------------------------------------------------------------------
+# - spacy 3.8.5 doesn't support Python 3.13, need 3.8.7+
+# - av 16.0.0 missing wheel for x86_64, pin to 15.1.0
+# ------------------------------------------------------------------------------
+RUN sed -i 's/spacy==3.8.5/spacy==3.8.7/g' pyproject.toml \
+    && sed -i 's/av>=14.2.0/av==15.1.0/g' pyproject.toml
 
-# Prepare Python virtual environment
-RUN python -m venv /home/user/venv
-ENV PATH="/home/user/venv/bin:${PATH}"
-RUN pip install virtualenv --no-cache-dir
-RUN pip install --upgrade pip setuptools GitPython --no-cache-dir
+# ------------------------------------------------------------------------------
+# Python dependencies via UV
+# ------------------------------------------------------------------------------
+# Using UV for faster dependency resolution and installation.
+# PyTorch is installed separately first for better layer caching.
+# ------------------------------------------------------------------------------
+RUN pip install --no-cache-dir \
+    torch \
+    torchvision \
+    torchaudio \
+    --index-url https://download.pytorch.org/whl/rocm6.4
 
-#Install Kokoro FastAPI dependencies
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.4
+# Install UV and sync dependencies
+RUN pip install --no-cache-dir uv \
+    && uv venv --python 3.13 \
+    && uv sync --extra ${DEVICE} --no-cache
 
-# Clone Kokoro FastAPI repository and copy scripts requied to run in Docker to the /app directory
-RUN git clone https://github.com/remsky/Kokoro-FastAPI.git /home/user/app
-
-RUN cp docker/scripts/* ./
-RUN chmod +x ./*.sh
-
-# Fix Spacy version not compatible with Python 3.13
-RUN sed -i 's/spacy==3.8.5/spacy==3.8.7/g' /home/user/app/pyproject.toml
-
-# AV 16.0.0 is missing wheel for x86_64
-RUN sed -i 's/av>=14.2.0/av==15.1.0/g' /home/user/app/pyproject.toml
-
-# Kokoro FastAPI uses UV
-RUN pip install uv --no-cache-dir
-RUN uv venv --python 3.13
-RUN uv sync --extra ${DEVICE} --no-cache
-
-# Download the voice model if needed
+# ------------------------------------------------------------------------------
+# Model pre-download (optional)
+# ------------------------------------------------------------------------------
+# Downloads the voice model during build to avoid first-run delays.
+# Set DOWNLOAD_MODEL=false to skip this step and download at runtime.
+# ------------------------------------------------------------------------------
 RUN if [ "${DOWNLOAD_MODEL}" = "true" ]; then \
-        pip install loguru && \
-        python ./download_model.py --output api/src/models/v1_0; \
+        pip install --no-cache-dir loguru \
+        && python ./download_model.py --output api/src/models/v1_0; \
     fi
 
-# Default port is 8880
+# ------------------------------------------------------------------------------
+# Container startup
+# ------------------------------------------------------------------------------
+# Default port: 8880
+# ------------------------------------------------------------------------------
 CMD ["sh", "./entrypoint.sh"]

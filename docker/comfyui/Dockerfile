@@ -1,104 +1,180 @@
-FROM archlinux
+# ==============================================================================
+# ComfyUI Container
+# ==============================================================================
+# AI image/video generation backend using ComfyUI with AMD ROCm support.
+# Provides the API backend for the ComfyChair Android application.
+#
+# Features:
+#   - ComfyUI with full ROCm 6.4 GPU acceleration
+#   - PyTorch with ROCm support
+#   - Pre-installed dependencies for common custom nodes
+#   - bitsandbytes compiled with ROCm support
+#   - bfloat16 support enabled for ROCm 6.4.1+
+#
+# Build args:
+#   RENDER_GID - Host's render group GID (for GPU access)
+#   VIDEO_GID  - Host's video group GID (for GPU access)
+# ==============================================================================
 
-ARG USER_UID
-ARG USER_GID
-ARG RENDER_GID
-ARG VIDEO_GID
+FROM ainode-base:python313
 
-WORKDIR /home/user/app
+# ------------------------------------------------------------------------------
+# Build arguments for GPU group access
+# ------------------------------------------------------------------------------
+ARG RENDER_GID=28
+ARG VIDEO_GID=27
 
-# Fix GIDs for groups to match host
-RUN groupmod -g ${USER_GID} users
-RUN groupmod -g ${RENDER_GID} render
-RUN groupmod -g ${VIDEO_GID} video
-
-# Add a user
-RUN useradd -u ${USER_UID} -r -g users -G render,video -s /sbin/nologin -m -c "User" user
-
-# Install dependencies
-RUN pacman -Syu --noconfirm && pacman -S --noconfirm base-devel ffmpeg git git-lfs rocm-hip-sdk sudo vim
-
-# Update paths to include ROCm
+# ------------------------------------------------------------------------------
+# ROCm environment configuration
+# ------------------------------------------------------------------------------
 ENV ROCM_PATH="/opt/rocm"
 ENV PATH="${PATH}:/opt/rocm/bin"
 
-# Allow user to build packages from AUR
-RUN echo "user ALL=(ALL) NOPASSWD: /usr/bin/pacman" >> /etc/sudoers
-
-# Prepare the runtime environment
-RUN chown -R user:users /home/user
-
-# Prepare directory for AUR
-RUN mkdir -p /home/user/aur
-RUN chown user:users /home/user/aur
-USER user
-
-## Install Python 3.13
-WORKDIR /home/user/aur/python313
-RUN git clone https://aur.archlinux.org/python313.git /home/user/aur/python313
-RUN makepkg -si --noconfirm
-
-# Cleanup
-WORKDIR /home/user/app
-RUN rm -rf /home/user/aur
-
-# Make python3.13 the default python (requires root)
-USER root
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python3
-USER user
-
-# Make sure Git supports LFS
-RUN git lfs install
-
-# Prepare Python virtual environment
-RUN python -m venv /home/user/venv
-ENV PATH="/home/user/venv/bin:${PATH}"
-RUN pip install virtualenv --no-cache-dir
-RUN pip install --upgrade pip setuptools GitPython --no-cache-dir
-
-# Install PyTorch for ROCm
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.4 --no-cache-dir
-
-# Install ComfyUI
-RUN git clone https://github.com/comfyanonymous/ComfyUI.git /home/user/app
-
-# Install ComfyUI dependencies
-RUN pip install -r /home/user/app/requirements.txt --no-cache-dir
-
-# Install some dependencies required by ComfyUI nodes
-RUN pip install insightface --no-cache-dir
-RUN pip install --use-pep517 facexlib --no-cache-dir
-RUN pip install filterpy --no-cache-dir
-RUN pip install onnxruntime onnxruntime-gpu --no-cache-dir
-RUN pip install opencv-python opencv-python-headless --no-cache-dir
-RUN pip install ffmpeg ffmpeg-python --no-cache-dir
-RUN pip install accelerate boto3 diffusers dill fal_client ftfy gguf imageio-ffmpeg piexif pykalman redis replicate segment_anything surrealist timm ultralytics --no-cache-dir
-RUN pip install matplotlib pydantic==2.* --no-cache-dir
-RUN pip install color-matcher --no-cache-dir
-RUN pip install huggingface-hub transformers --no-cache-dir
-RUN pip install git+https://github.com/facebookresearch/sam2 --no-cache-dir
-RUN pip install pywavelets --no-cache-dir
-
-# Sageattention can't find the torch module, skipping the module for now
-#RUN pip install sageattention --no-cache-dir
-
-# Build and install bitsandbytes with ROCm support
-# See https://huggingface.co/docs/bitsandbytes/main/en/installation#multi-backend
-WORKDIR /home/user/bitsandbytes
-RUN git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git /home/user/bitsandbytes
-RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" cmake -S . -DCOMPUTE_BACKEND=hip -DBNB_ROCM_ARCH="gfx1100"
-RUN make
-RUN pip install .
-RUN rm -rf /home/user/bitsandbytes
-WORKDIR /home/user/app
-
-# ROCm supports bfloat16 since version 6.4.1
-# See https://github.com/kasper93/ComfyUI/commit/8d3e5acda351f140fc2b653ffe71bdb14e72e045
-RUN sed -i 's/and (not is_amd()) //g' /home/user/app/comfy/model_management.py
-
-# See https://github.com/ROCm/ROCm/issues/4742
+# MIOpen tuning mode (2 = fast, reduces startup time)
+# See: https://github.com/ROCm/ROCm/issues/4742
 ENV MIOPEN_FIND_MODE="2"
+
+# Enable experimental AOTriton features for better performance
 ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL="1"
 
-CMD ["python", "./main.py", "--listen", "0.0.0.0", "--port", "8188", "--temp-directory", "/tmp", "--preview-method", "auto"]
+# ------------------------------------------------------------------------------
+# System packages and GPU group setup
+# ------------------------------------------------------------------------------
+# Install ROCm SDK and required system packages, then fix GPU group GIDs
+# to match host system for proper /dev/kfd and /dev/dri access.
+# ------------------------------------------------------------------------------
+USER root
+RUN pacman -Syu --noconfirm \
+    && pacman -S --noconfirm \
+        ffmpeg \
+        git-lfs \
+        rocm-hip-sdk \
+    # Fix GPU group GIDs to match host
+    && groupmod -g ${RENDER_GID} render \
+    && groupmod -g ${VIDEO_GID} video \
+    # Add user to GPU groups
+    && usermod -aG render,video user \
+    # Ensure app directory has correct ownership
+    && chown -R user:users /home/user/app \
+    # Clean package cache
+    && rm -rf /var/cache/pacman/pkg/* \
+    && rm -rf /var/lib/pacman/sync/*
+
+# ------------------------------------------------------------------------------
+# ComfyUI installation
+# ------------------------------------------------------------------------------
+USER user
+WORKDIR /home/user/app
+
+# Initialize Git LFS for model downloads
+RUN git lfs install
+
+# Clone ComfyUI repository
+RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git .
+
+# ------------------------------------------------------------------------------
+# Python dependencies installation
+# ------------------------------------------------------------------------------
+# Installing all pip packages in consolidated layers to minimize image size.
+# Grouped by: PyTorch -> ComfyUI core -> Node dependencies -> Special builds
+# ------------------------------------------------------------------------------
+
+# PyTorch with ROCm 6.4 support (large download, separate layer for caching)
+RUN pip install --no-cache-dir \
+    torch \
+    torchvision \
+    torchaudio \
+    --index-url https://download.pytorch.org/whl/rocm6.4
+
+# ComfyUI core requirements
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Dependencies for popular custom nodes (consolidated into single layer)
+# - insightface, facexlib: Face detection/recognition nodes
+# - onnxruntime: ONNX model inference
+# - opencv: Image processing
+# - ffmpeg-python: Video processing
+# - accelerate, diffusers: HuggingFace integrations
+# - segment_anything, sam2: Segmentation models
+# - ultralytics: YOLO models
+RUN pip install --no-cache-dir \
+    # Face processing
+    insightface \
+    filterpy \
+    # ONNX runtime
+    onnxruntime \
+    # Image/video processing
+    opencv-python-headless \
+    ffmpeg-python \
+    color-matcher \
+    pywavelets \
+    # HuggingFace ecosystem
+    accelerate \
+    diffusers \
+    huggingface-hub \
+    transformers \
+    gguf \
+    # ML utilities
+    boto3 \
+    dill \
+    fal_client \
+    ftfy \
+    imageio-ffmpeg \
+    matplotlib \
+    piexif \
+    pykalman \
+    "pydantic>=2.0,<3.0" \
+    redis \
+    replicate \
+    timm \
+    ultralytics \
+    # Segmentation
+    segment_anything
+
+# facexlib requires PEP 517 build
+RUN pip install --no-cache-dir --use-pep517 facexlib
+
+# SAM2 from GitHub (not on PyPI)
+RUN pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
+
+# ------------------------------------------------------------------------------
+# bitsandbytes with ROCm support
+# ------------------------------------------------------------------------------
+# Building from source with HIP backend for AMD GPU quantization support.
+# See: https://huggingface.co/docs/bitsandbytes/main/en/installation#multi-backend
+# ------------------------------------------------------------------------------
+WORKDIR /home/user/bitsandbytes
+
+RUN git clone --depth 1 https://github.com/bitsandbytes-foundation/bitsandbytes.git . \
+    && HIPCXX="$(hipconfig -l)/clang" \
+       HIP_PATH="$(hipconfig -R)" \
+       cmake -S . -DCOMPUTE_BACKEND=hip -DBNB_ROCM_ARCH="gfx1100" \
+    && make -j$(nproc) \
+    && pip install --no-cache-dir . \
+    # Cleanup build artifacts (saves ~500MB)
+    && cd /home/user \
+    && rm -rf /home/user/bitsandbytes
+
+WORKDIR /home/user/app
+
+# ------------------------------------------------------------------------------
+# ROCm bfloat16 patch
+# ------------------------------------------------------------------------------
+# Enable bfloat16 support for ROCm 6.4.1+
+# See: https://github.com/kasper93/ComfyUI/commit/8d3e5acda351f140fc2b653ffe71bdb14e72e045
+# ------------------------------------------------------------------------------
+RUN sed -i 's/and (not is_amd()) //g' comfy/model_management.py
+
+# ------------------------------------------------------------------------------
+# Container startup
+# ------------------------------------------------------------------------------
+# --listen 0.0.0.0  : Accept connections from any interface (required for Docker)
+# --port 8188       : Default ComfyUI port
+# --temp-directory  : Use tmpfs for temporary files
+# --preview-method  : Enable auto preview generation
+# ------------------------------------------------------------------------------
+CMD ["python", "./main.py", \
+     "--listen", "0.0.0.0", \
+     "--port", "8188", \
+     "--temp-directory", "/tmp", \
+     "--preview-method", "auto"]

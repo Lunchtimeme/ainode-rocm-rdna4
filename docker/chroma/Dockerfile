@@ -1,84 +1,136 @@
-FROM archlinux
+# ==============================================================================
+# ChromaDB Container
+# ==============================================================================
+# Vector database for storing and querying embeddings.
+# Used by Open WebUI for RAG (Retrieval-Augmented Generation).
+#
+# Features:
+#   - ChromaDB with persistent storage
+#   - gRPC and REST API support
+#   - Multi-stage build to exclude Rust toolchain from final image
+#   - Telemetry disabled
+#
+# Build stages:
+#   1. builder: Compiles ChromaDB with Rust/maturin
+#   2. runtime: Final image with only Python runtime
+#
+# Build args:
+#   USER_UID        - UID for the container user (default: 1000)
+#   USER_GID        - GID for the users group (default: 100)
+#   CHROMADB_VERSION - ChromaDB version to build (default: 0.6.3)
+#   REBUILD_HNSWLIB  - Force rebuild of hnswlib (default: false)
+# ==============================================================================
 
-ARG USER_UID
-ARG USER_GID
+# ==============================================================================
+# Stage 1: Builder
+# ==============================================================================
+# Compiles ChromaDB's Rust components. Rust toolchain (~1GB) is not included
+# in the final image.
+# ==============================================================================
+FROM ainode-base:python313 AS builder
 
-# Configuration
-## Chroma-specific. ChromaDB has to be the same version as in Open WebUI
-ARG REBUILD_HNSWLIB
-ARG PROTOBUF_VERSION="28.2"
-ARG CHROMADB_VERSION="0.6.3"
+ARG CHROMADB_VERSION=0.6.3
+ARG REBUILD_HNSWLIB=false
 
-## Disable telemetry
+# Install Rust and build dependencies
+USER root
+RUN pacman -Syu --noconfirm \
+    && pacman -S --noconfirm \
+        protobuf \
+        rust \
+    # Create build directory with correct ownership
+    && mkdir -p /home/user/build \
+    && chown -R user:users /home/user/build \
+    && rm -rf /var/cache/pacman/pkg/*
+
+USER user
+WORKDIR /home/user/build
+
+# Clone ChromaDB at specified version
+RUN git clone --depth 1 --branch ${CHROMADB_VERSION} \
+    https://github.com/chroma-core/chroma.git .
+
+# Install build dependencies
+RUN pip install --no-cache-dir \
+    cffi \
+    fastapi \
+    maturin \
+    opentelemetry-instrumentation \
+    opentelemetry-instrumentation-fastapi \
+    patchelf
+
+# Install ChromaDB Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Conditionally rebuild hnswlib (needed for some architectures)
+RUN if [ "${REBUILD_HNSWLIB}" = "true" ]; then \
+        pip install --no-cache-dir --no-binary :all: --force-reinstall chroma-hnswlib; \
+    fi
+
+# Install gRPC dependencies
+RUN pip install --no-cache-dir grpcio grpcio-tools
+
+# Build protobuf files and install ChromaDB
+RUN make -C idl proto_python \
+    && pip uninstall chromadb -y || true \
+    && pip install --no-cache-dir --find-links target/wheels/ chromadb
+
+
+# ==============================================================================
+# Stage 2: Runtime
+# ==============================================================================
+# Minimal runtime image without Rust toolchain or build artifacts.
+# ==============================================================================
+FROM ainode-base:python313 AS runtime
+
+ARG USER_UID=1000
+ARG USER_GID=100
+
+# ------------------------------------------------------------------------------
+# ChromaDB environment configuration
+# ------------------------------------------------------------------------------
+# Disable telemetry
 ENV ANONYMIZED_TELEMETRY="false"
 
-## Set as persistent
+# Enable persistent storage
 ENV IS_PERSISTENT="true"
 ENV PERSIST_DIRECTORY="/home/user/app/chroma"
 
-WORKDIR /home/user
+# ------------------------------------------------------------------------------
+# Copy installed packages from builder
+# ------------------------------------------------------------------------------
+# Copy the entire venv with all installed packages
+COPY --from=builder --chown=user:users /home/user/venv /home/user/venv
 
-# Fix GIDs for groups to match host
-RUN groupmod -g ${USER_GID} users
-
-# Add a user
-RUN useradd -u ${USER_UID} -r -g users -s /sbin/nologin -m -c "User" user
-
-# Install dependencies
-RUN pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git protobuf rust sudo unzip vim
-
-# Allow user to build packages from AUR
-RUN echo "user ALL=(ALL) NOPASSWD: /usr/bin/pacman" >> /etc/sudoers
-
-# Prepare the runtime environment
-RUN chown -R user:users /home/user
-
-# Prepare directory for AUR
-RUN mkdir -p /home/user/aur
-RUN chown user:users /home/user/aur
+# ------------------------------------------------------------------------------
+# Application setup
+# ------------------------------------------------------------------------------
 USER user
-
-## Install Python 3.13
-WORKDIR /home/user/aur/python313
-RUN git clone https://aur.archlinux.org/python313.git /home/user/aur/python313
-RUN makepkg -si --noconfirm
-
-# Cleanup
-WORKDIR /home/user
-RUN rm -rf /home/user/aur
-
-# Make python3.13 the default python (requires root)
-USER root
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python
-RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python3
-USER user
-
-# Setup venv
-RUN python -m venv /home/user/venv
-ENV PATH="/home/user/venv/bin:${PATH}"
-RUN pip install virtualenv --no-cache-dir
-RUN pip install --upgrade pip setuptools GitPython --no-cache-dir
-
-# Get ChromaDB
-RUN git clone https://github.com/chroma-core/chroma.git /home/user/app
 WORKDIR /home/user/app
-RUN git checkout ${CHROMADB_VERSION}
 
-# Install ChromaDB's dependencies
-RUN pip install cffi fastapi maturin opentelemetry-instrumentation opentelemetry-instrumentation-fastapi patchelf --no-cache-dir
-RUN pip install -r /home/user/app/requirements.txt --no-cache-dir
-RUN if [ "${REBUILD_HNSWLIB}" = "true" ]; then pip install --no-binary :all: --force-reinstall chroma-hnswlib --no-cache-dir; fi
-RUN pip install grpcio grpcio-tools --no-cache-dir
+# Clone ChromaDB for config files and scripts (minimal clone)
+RUN git clone --depth 1 https://github.com/chroma-core/chroma.git .
 
-# Install ChromaDB
-RUN make -C idl proto_python
-#RUN python -m maturin build
-RUN pip uninstall chromadb -y
-RUN pip install --find-links target/wheels/ chromadb --no-cache-dir
+# Disable telemetry user ID (set to zeros even with telemetry disabled)
+RUN mkdir -p .cache/chroma \
+    && echo -n 00000000-0000-0000-0000-000000000000 > .cache/chroma/telemetry_user_id
 
-# Even with anonymized telemetry disabled, set the user_id to zeros, just in case
-RUN mkdir -p /home/user/app/.cache/chroma
-RUN echo -n 00000000-0000-0000-0000-000000000000 > /home/user/app/.cache/chroma/telemetry_user_id
-
+# ------------------------------------------------------------------------------
+# Container startup
+# ------------------------------------------------------------------------------
+# uvicorn settings:
+#   --workers 1      : Single worker (sufficient for most use cases)
+#   --host 0.0.0.0   : Accept connections from any interface
+#   --port 8000      : Default ChromaDB port
+#   --proxy-headers  : Trust X-Forwarded-* headers from reverse proxy
+#   --reload         : Auto-reload on code changes (development)
+#   --timeout-keep-alive : Keep connections alive for 30 seconds
+# ------------------------------------------------------------------------------
 ENTRYPOINT ["uvicorn", "chromadb.app:app"]
-CMD ["--workers", "1", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--reload", "--log-config", "/home/user/app/chromadb/log_config.yml", "--timeout-keep-alive", "30"]
+CMD ["--workers", "1", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--proxy-headers", \
+     "--reload", \
+     "--log-config", "/home/user/app/chromadb/log_config.yml", \
+     "--timeout-keep-alive", "30"]

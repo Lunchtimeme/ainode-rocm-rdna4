@@ -25,11 +25,32 @@ RUN groupmod -g ${USER_GID} users
 RUN useradd -u ${USER_UID} -r -g users -s /sbin/nologin -m -c "User" user
 
 # Install dependencies
-RUN pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git protobuf python-pipenv rust unzip vim
+RUN pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git protobuf rust sudo unzip vim
+
+# Allow user to build packages from AUR
+RUN echo "user ALL=(ALL) NOPASSWD: /usr/bin/pacman" >> /etc/sudoers
 
 # Prepare the runtime environment
 RUN chown -R user:users /home/user
 
+# Prepare directory for AUR
+RUN mkdir -p /home/user/aur
+RUN chown user:users /home/user/aur
+USER user
+
+## Install Python 3.13
+WORKDIR /home/user/aur/python313
+RUN git clone https://aur.archlinux.org/python313.git /home/user/aur/python313
+RUN makepkg -si --noconfirm
+
+# Cleanup
+WORKDIR /home/user
+RUN rm -rf /home/user/aur
+
+# Make python3.13 the default python (requires root)
+USER root
+RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python
+RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python3
 USER user
 
 # Setup venv

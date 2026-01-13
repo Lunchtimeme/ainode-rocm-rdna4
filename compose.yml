@@ -60,7 +60,7 @@ services:
       - ainode-internal
     restart: unless-stopped
     volumes:
-      - ./data/comfyui/config:/home/user/app/user/default
+      - ./data/comfyui/user:/home/user/app/user
       - ./data/comfyui/custom_nodes:/home/user/app/custom_nodes
       - ./data/common/models:/home/user/app/models
       - type: tmpfs
@@ -164,6 +164,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./data/reverseproxy/sites-enabled:/etc/nginx/sites-enabled
+      - ./data/reverseproxy/htpasswd:/etc/nginx/htpasswd
       - ./ssl:/etc/nginx/certs
       - type: tmpfs
         target: /tmp

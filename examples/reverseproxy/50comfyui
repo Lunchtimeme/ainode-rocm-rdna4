@@ -11,6 +11,9 @@ server {
 
 	proxy_buffering off;
 
+	auth_basic "ComfyUI";
+	auth_basic_user_file /etc/nginx/htpasswd/.htpasswd;
+
 	# ComfyUI
 	location / {
 		resolver 127.0.0.11 valid=30s;

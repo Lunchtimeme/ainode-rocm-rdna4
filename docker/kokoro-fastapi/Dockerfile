@@ -28,17 +28,41 @@ RUN groupmod -g ${VIDEO_GID} video
 RUN useradd -u ${USER_UID} -r -g users -G render,video -s /sbin/nologin -m -c "User" user
 
 # Install dependencies
-RUN pacman -Syu --noconfirm && pacman -S --noconfirm base-devel espeak-ng ffmpeg git python-pipenv rocm-core vim
+RUN pacman -Syu --noconfirm && pacman -S --noconfirm base-devel espeak-ng ffmpeg git rocm-core sudo vim
 
 # Update paths to include ROCm
 ENV ROCM_PATH="/opt/rocm"
 ENV PATH="${PATH}:/opt/rocm/bin"
 
+# Allow user to build packages from AUR
+RUN echo "user ALL=(ALL) NOPASSWD: /usr/bin/pacman" >> /etc/sudoers
+
+# Prepare the runtime environment
 RUN chown -R user:users /home/user
 
-# Kokoro has somewhere hardcoded path to the app, temporary workaround
-RUN ln -s /home/user/app /app
+# Prepare directory for AUR
+RUN mkdir -p /home/user/aur
+RUN chown user:users /home/user/aur
+USER user
 
+## Install Python 3.13
+WORKDIR /home/user/aur/python313
+RUN git clone https://aur.archlinux.org/python313.git /home/user/aur/python313
+RUN makepkg -si --noconfirm
+
+# Cleanup
+WORKDIR /home/user/app
+RUN rm -rf /home/user/aur
+
+# Make python3.13 the default python (requires root)
+USER root
+RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python
+RUN ln -sf /usr/bin/python3.13 /usr/local/bin/python3
+USER user
+
+# Kokoro has somewhere hardcoded path to the app, temporary workaround
+USER root
+RUN ln -s /home/user/app /app
 USER user
 
 # Prepare Python virtual environment

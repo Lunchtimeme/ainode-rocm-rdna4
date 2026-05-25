@@ -143,19 +143,7 @@ RUN pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
 # Building from source with HIP backend for AMD GPU quantization support.
 # See: https://huggingface.co/docs/bitsandbytes/main/en/installation#multi-backend
 # ------------------------------------------------------------------------------
-WORKDIR /home/user/bitsandbytes
-
-RUN git clone --depth 1 https://github.com/bitsandbytes-foundation/bitsandbytes.git . \
-    && HIPCXX="$(hipconfig -l)/clang" \
-       HIP_PATH="$(hipconfig -R)" \
-       cmake -S . -DCOMPUTE_BACKEND=hip -DBNB_ROCM_ARCH="gfx1100" \
-    && make -j$(nproc) \
-    && pip install --no-cache-dir . \
-    # Cleanup build artifacts (saves ~500MB)
-    && cd /home/user \
-    && rm -rf /home/user/bitsandbytes
-
-WORKDIR /home/user/app
+RUN pip install --no-cache-dir bitsandbytes
 
 # ------------------------------------------------------------------------------
 # ROCm bfloat16 patch

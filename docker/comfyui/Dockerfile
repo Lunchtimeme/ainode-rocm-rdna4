@@ -90,6 +90,7 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Dependencies for popular custom nodes (consolidated into single layer)
+# - comfyui-manager: Node Manager
 # - insightface, facexlib: Face detection/recognition nodes
 # - onnxruntime: ONNX model inference
 # - opencv: Image processing
@@ -98,6 +99,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # - segment_anything, sam2: Segmentation models
 # - ultralytics: YOLO models
 RUN pip install --no-cache-dir \
+    # Node Manager
+    comfyui-manager \
+    matrix-nio \
     # Face processing
     insightface \
     filterpy \
@@ -165,4 +169,5 @@ CMD ["python", "./main.py", \
      "--listen", "0.0.0.0", \
      "--port", "8188", \
      "--temp-directory", "/tmp", \
-     "--preview-method", "auto"]
+     "--preview-method", "auto", \
+     "--enable-manager"]

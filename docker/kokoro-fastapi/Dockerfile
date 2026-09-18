@@ -122,5 +122,8 @@ RUN if [ "${DOWNLOAD_MODEL}" = "true" ]; then \
 # Container startup
 # ------------------------------------------------------------------------------
 # Default port: 8880
+# entrypoint.sh runs plain "python -m uvicorn", so put the project's own venv (populated by uv sync above) ahead of the base image's /home/user/venv on PATH
 # ------------------------------------------------------------------------------
+ENV PATH="/home/user/app/.venv/bin:${PATH}"
+
 CMD ["sh", "./entrypoint.sh"]

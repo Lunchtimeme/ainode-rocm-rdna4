@@ -5,11 +5,10 @@
 # Provides the API backend for the ComfyChair Android application.
 #
 # Features:
-#   - ComfyUI with full ROCm 6.4 GPU acceleration
-#   - PyTorch with ROCm support
+#   - ComfyUI with ROCm 10.2 nightly GPU acceleration (Dynamic VRAM support)
+#   - PyTorch with ROCm support (pip-based ROCm from AMD's whl-next nightly index)
 #   - Pre-installed dependencies for common custom nodes
-#   - bitsandbytes compiled with ROCm support
-#   - bfloat16 support enabled for ROCm 6.4.1+
+#   - bitsandbytes (quantization)
 #
 # Build args:
 #   RENDER_GID - Host's render group GID (for GPU access)
@@ -27,8 +26,8 @@ ARG VIDEO_GID=27
 # ------------------------------------------------------------------------------
 # ROCm environment configuration
 # ------------------------------------------------------------------------------
-ENV ROCM_PATH="/opt/rocm"
-ENV PATH="${PATH}:/opt/rocm/bin"
+# ROCm libraries come from pip packages (TheRock), there is no system ROCm under /opt/rocm
+# Do not set PYTORCH_HIP_ALLOC_CONF=expandable_segments:True - it breaks generation with Dynamic VRAM (HIP out of memory during VAE decode) and makes it slower
 
 # MIOpen tuning mode (2 = fast, reduces startup time)
 # See: https://github.com/ROCm/ROCm/issues/4742
@@ -40,15 +39,14 @@ ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL="1"
 # ------------------------------------------------------------------------------
 # System packages and GPU group setup
 # ------------------------------------------------------------------------------
-# Install ROCm SDK and required system packages, then fix GPU group GIDs
-# to match host system for proper /dev/kfd and /dev/dri access.
+# Install system packages, then fix GPU group GIDs to match host system for
+# proper /dev/kfd and /dev/dri access.
 # ------------------------------------------------------------------------------
 USER root
 RUN pacman -Syu --noconfirm \
     && pacman -S --noconfirm \
         ffmpeg \
         git-lfs \
-        rocm-hip-sdk \
     # Fix GPU group GIDs to match host
     && groupmod -g ${RENDER_GID} render \
     && groupmod -g ${VIDEO_GID} video \
@@ -79,12 +77,20 @@ RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git .
 # Grouped by: PyTorch -> ComfyUI core -> Node dependencies -> Special builds
 # ------------------------------------------------------------------------------
 
-# PyTorch with ROCm 6.4 support (large download, separate layer for caching)
-RUN pip install --no-cache-dir \
-    torch \
-    torchvision \
-    torchaudio \
-    --index-url https://download.pytorch.org/whl/rocm6.4
+# PyTorch with ROCm 10.2 nightly from AMD's whl-next index (large download, separate layer for caching)
+# Nightly instead of stable 7.14.1: the bundled ROCR 1.21 in 7.14.x wheels keeps one CPU core at 100% (ROCm/TheRock#7051), reportedly fixed in newer nightlies
+# Stable fallback: "torch[device-gfx1100]==2.12.0+rocm7.14.1" "torchvision==0.27.0+rocm7.14.1" "torchaudio==2.11.0+rocm7.14.1" from https://repo.amd.com/rocm/whl-multi-arch/
+# device-gfx1100 = RX 7900 XTX; PyPI stays as extra index for the regular dependencies
+RUN pip install --no-cache-dir --pre \
+    "torch[device-gfx1100]==2.15.0a0+rocm10.2.0a20260918" \
+    "torchvision==0.30.0a0+rocm10.2.0a20260918" \
+    "torchaudio==2.11.0.3+rocm10.2.0a20260918" \
+    --index-url https://nightly.repo.amd.com/rocm/whl-next/ \
+    --extra-index-url https://pypi.org/simple
+
+# Keep later pip installs from replacing the ROCm build of PyTorch
+RUN pip freeze | grep -i -E '^(torch|torchvision|torchaudio|triton)==' > /home/user/torch-constraints.txt
+ENV PIP_CONSTRAINT="/home/user/torch-constraints.txt"
 
 # ComfyUI core requirements
 RUN pip install --no-cache-dir -r requirements.txt
@@ -141,33 +147,26 @@ RUN pip install --no-cache-dir --use-pep517 facexlib
 # SAM2 from GitHub (not on PyPI)
 RUN pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
 
-# ------------------------------------------------------------------------------
 # bitsandbytes with ROCm support
-# ------------------------------------------------------------------------------
-# Building from source with HIP backend for AMD GPU quantization support.
-# See: https://huggingface.co/docs/bitsandbytes/main/en/installation#multi-backend
-# ------------------------------------------------------------------------------
 RUN pip install --no-cache-dir bitsandbytes
-
-# ------------------------------------------------------------------------------
-# ROCm bfloat16 patch
-# ------------------------------------------------------------------------------
-# Enable bfloat16 support for ROCm 6.4.1+
-# See: https://github.com/kasper93/ComfyUI/commit/8d3e5acda351f140fc2b653ffe71bdb14e72e045
-# ------------------------------------------------------------------------------
-RUN sed -i 's/and (not is_amd()) //g' comfy/model_management.py
 
 # ------------------------------------------------------------------------------
 # Container startup
 # ------------------------------------------------------------------------------
-# --listen 0.0.0.0  : Accept connections from any interface (required for Docker)
-# --port 8188       : Default ComfyUI port
-# --temp-directory  : Use tmpfs for temporary files
-# --preview-method  : Enable auto preview generation
+# --listen 0.0.0.0       : Accept connections from any interface (required for Docker)
+# --port 8188            : Default ComfyUI port
+# --temp-directory       : Use tmpfs for temporary files
+# --preview-method       : Enable auto preview generation
+# --async-offload        : Overlap weight offloading with computation (2 streams)
+# --enable-dynamic-vram  : Load model weights on demand, spilling to RAM when VRAM runs out
+# --fast-disk            : Disk-backed dynamic loading and offload over unpinned RAM (helps with fast NVMe)
 # ------------------------------------------------------------------------------
 CMD ["python", "./main.py", \
      "--listen", "0.0.0.0", \
      "--port", "8188", \
      "--temp-directory", "/tmp", \
      "--preview-method", "auto", \
+     "--async-offload", \
+     "--enable-dynamic-vram", \
+     "--fast-disk", \
      "--enable-manager"]

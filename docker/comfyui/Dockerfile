@@ -79,11 +79,11 @@ RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git .
 
 # PyTorch with ROCm 10.2 nightly from AMD's whl-next index (large download, separate layer for caching)
 # Nightly instead of stable 7.14.1: the bundled ROCR 1.21 in 7.14.x wheels keeps one CPU core at 100% (ROCm/TheRock#7051), reportedly fixed in newer nightlies
-# Stable fallback: "torch[device-gfx1100]==2.12.0+rocm7.14.1" "torchvision==0.27.0+rocm7.14.1" "torchaudio==2.11.0+rocm7.14.1" from https://repo.amd.com/rocm/whl-multi-arch/
-# device-gfx1100 = RX 7900 XTX; PyPI stays as extra index for the regular dependencies
+# Stable fallback: "torch[device-gfx1201]==2.12.0+rocm7.14.1" "torchvision[device-gfx1201]==0.27.0+rocm7.14.1" "torchaudio==2.11.0+rocm7.14.1" from https://repo.amd.com/rocm/whl-multi-arch/
+# device-gfx1201 = RX 9070 XT; PyPI stays as extra index for the regular dependencies
 RUN pip install --no-cache-dir --pre \
-    "torch[device-gfx1100]==2.15.0a0+rocm10.2.0a20260918" \
-    "torchvision==0.30.0a0+rocm10.2.0a20260918" \
+    "torch[device-gfx1201]==2.15.0a0+rocm10.2.0a20260918" \
+    "torchvision[device-gfx1201]==0.30.0a0+rocm10.2.0a20260918" \
     "torchaudio==2.11.0.3+rocm10.2.0a20260918" \
     --index-url https://nightly.repo.amd.com/rocm/whl-next/ \
     --extra-index-url https://pypi.org/simple

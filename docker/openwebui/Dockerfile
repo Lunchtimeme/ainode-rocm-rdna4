@@ -34,7 +34,9 @@ RUN pacman -Syu --noconfirm \
     && rm -rf /var/cache/pacman/pkg/*
 
 WORKDIR /build
-
+ENV NODE_OPTIONS="--max-old-space-size=8192"
+# Invalidate cache for git pull
+ARG CACHEBURST=1
 # Clone and build frontend
 RUN git clone --depth 1 https://github.com/open-webui/open-webui.git . \
     # "--force" workaround for dependency resolution issue
@@ -96,7 +98,7 @@ ENV CHROMA_HTTP_SSL=false
 
 # Authentication settings
 ENV DEFAULT_USER_ROLE="admin"
-ENV ENABLE_SIGNUP="false"
+ENV ENABLE_SIGNUP="true"
 ENV WEBUI_AUTH="true"
 
 # ------------------------------------------------------------------------------
@@ -120,6 +122,8 @@ RUN pacman -Syu --noconfirm \
 USER user
 WORKDIR /home/user/app
 
+# Invalidate cache for git pull
+ARG CACHEBURST=1
 # Clone repository (backend code only, frontend comes from builder stage)
 RUN git clone --depth 1 https://github.com/open-webui/open-webui.git .
 

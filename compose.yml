@@ -102,6 +102,11 @@ services:
         <<: *build-args-gpu
     container_name: ainode-comfyui
     hostname: ainode-comfyui
+    environment:
+     - MIOPEN_FIND_MODE=2
+     - PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:512
+     - AMD_ENABLE_MIOPEN=1
+     - TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
     networks:
       - ainode-internal
     volumes:
@@ -172,6 +177,8 @@ services:
         <<: *build-args-gpu
     container_name: ainode-ollama
     hostname: ainode-ollama
+   # environment:
+    #  - OLLAMA_KEEP_ALIVE=1m
     networks:
       - ainode-internal
     # tmpfs with exec permission (required by Ollama)
@@ -180,6 +187,7 @@ services:
     volumes:
       # Persistent model storage
       - ./data/ollama:/home/user/.ollama
+      - ./data/common/models:/models
       # Temporary storage
       - type: tmpfs
         target: /home/user/.cache
@@ -225,6 +233,26 @@ services:
         target: /tmp
         tmpfs:
           mode: 01777
+
+
+  # ============================================================================
+  # SearXNG - Metasearch Engine
+  # ============================================================================
+  # Web search backend for Open WebUI integration.
+  # ============================================================================
+  searxng:
+    <<: *common
+    image: searxng/searxng:latest
+    container_name: ainode-searxng
+    hostname: ainode-searxng
+    networks:
+      - ainode-internal
+    ports:
+      - "8080:8080" # Allows you to access the search engine directly in your browser
+    volumes:
+      - ./data/searxng:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
 
   # ============================================================================
   # Reverse Proxy (nginx)

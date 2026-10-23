@@ -1,16 +1,15 @@
-# Example SearXNG settings for AINode (RDNA4 / RX 9070 XT fork).
-#
-# Copy this file to data/searxng/settings.yml and customise before first use.
-# Full reference: https://docs.searxng.org/
-#
-# NOTE: data/ is gitignored in this fork so your models and configs never leave
-# your machine. You must create data/searxng/ yourself (see README).
+# Example SearXNG configuration for AINode.
+# Copy to data/searxng/settings.yml and set your own secret_key.
+# Keep use_default_settings enabled to inherit SearXNG defaults.
+
+use_default_settings: true
 
 server:
-    secret_key: "CHANGE_ME_TO_A_RANDOM_SECRET_KEY"
-    bind_address: "0.0.0.0:8080"
-    url: http://localhost:8080/
+  # Generate a unique secret, e.g. with: openssl rand -hex 32
+  secret_key: "REPLACE_WITH_YOUR_OWN_RANDOM_SECRET"
 
-# JSON responses are available natively by appending ?format=json to any search
-# request. Open WebUI consumes SearXNG via this JSON endpoint, so no extra
-# toggle is required to "enable JSON".
+search:
+  # JSON is required for Open WebUI's SearXNG integration.
+  formats:
+    - html
+    - json

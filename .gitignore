@@ -1,0 +1,12 @@
+# Persistent runtime data, models, conversations, and local configuration
+/data/
+
+# Local TLS certificates and private keys (entire folder is local-only)
+/ssl/**
+
+# Local environment files and secrets (edit manually per README before first build)
+/.env
+/.env.*
+
+# Local scratch file
+/unused commands

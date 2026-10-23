@@ -107,6 +107,8 @@ services:
      - PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:512
      - AMD_ENABLE_MIOPEN=1
      - TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+     - HIP_VISIBLE_DEVICES=0
+     - ROCR_VISIBLE_DEVICES=0
     networks:
       - ainode-internal
     volumes:
@@ -177,8 +179,6 @@ services:
         <<: *build-args-gpu
     container_name: ainode-ollama
     hostname: ainode-ollama
-   # environment:
-    #  - OLLAMA_KEEP_ALIVE=1m
     networks:
       - ainode-internal
     # tmpfs with exec permission (required by Ollama)

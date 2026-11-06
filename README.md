@@ -208,30 +208,33 @@ Set `PRISM_ENABLE=0` in the environment of the `ollama` service, or remove the b
 
 ## Updating ComfyUI
 
-ComfyUI is pinned to one tested upstream release so that rebuilds are reproducible. The version appears in exactly two places, keep them in sync:
-
-* `COMFYUI_REF` in `docker/comfyui/Dockerfile` (used by `git clone --branch`)
-* the `image:` tag of the `comfyui` service in `compose.yml`
-
-Both are currently `v0.44.0`.
-
-A full `docker compose build comfyui` re-downloads the PyTorch ROCm nightly layer (6.8 GB) and the custom-node dependency layers (~2.9 GB) whenever the ComfyUI checkout changes, because the clone runs before the pip layers in that Dockerfile. For a bump that only needs ComfyUI itself, use the overlay instead: it keeps the existing image and replaces only the checkout plus the pip packages the release pins (typically 50-300 MB).
-
-```bash
-# build the thin overlay on top of the image you are running now
-docker build -f docker/comfyui/Dockerfile.update \
-    --build-arg BASE_IMAGE=ainode-comfyui:0.44.0 \
-    --build-arg COMFYUI_REF=v0.45.0 \
-    -t ainode-comfyui:0.45.0 ./docker/comfyui
-
-# point compose.yml at the new tag, then recreate only that container
-docker compose up -d --no-deps comfyui
-```
-
-`Dockerfile.update` keeps `PIP_CONSTRAINT` from the base image, so the ROCm PyTorch build cannot be replaced by the pip run. Verify the result with:
+The ComfyUI release is pinned in one place, `COMFYUI_REF` in `docker/comfyui/Dockerfile` (it drives `git clone --branch`). The image is always tagged `ainode-comfyui:latest`, so the tag says nothing about the version - `COMFYUI_REF` does, and the running container reports it:
 
 ```bash
 docker exec ainode-comfyui /home/user/venv/bin/python -c "import comfyui_version; print(comfyui_version.__version__)"
 ```
 
-Keep the previous tag around until the new one has produced an image, that is your rollback: put the old tag back into `compose.yml` and `docker compose up -d --no-deps comfyui`.
+A full `docker compose build comfyui` re-downloads the PyTorch ROCm nightly layer (6.8 GB) and the custom-node dependency layers (~2.9 GB) whenever the ComfyUI checkout changes, because the clone runs before the pip layers in that Dockerfile. For a bump that only needs ComfyUI itself, use the overlay instead: it starts from the image you already have and replaces only the checkout plus the pip packages the release pins (typically 50-300 MB).
+
+```bash
+docker build -f docker/comfyui/Dockerfile.update \
+    --build-arg COMFYUI_REF=v0.45.0 \
+    -t ainode-comfyui:latest ./docker/comfyui
+
+docker compose up -d --no-deps comfyui
+```
+
+Then set `COMFYUI_REF` in `docker/comfyui/Dockerfile` to the same value, so a later full rebuild reproduces what you are running. `Dockerfile.update` keeps `PIP_CONSTRAINT` from the base image, so the ROCm PyTorch build cannot be replaced by the pip run.
+
+There is no snapshot to keep: images are immutable and a tag is just a pointer, so going back means building again at the older ref:
+
+```bash
+docker build -f docker/comfyui/Dockerfile.update \
+    --build-arg COMFYUI_REF=v0.43.0 \
+    -t ainode-comfyui:latest ./docker/comfyui
+docker compose up -d --no-deps comfyui
+```
+
+That takes the same minute as going forward. If the previous image is still on disk, `docker image ls -a` shows it (possibly untagged, `<none>`), and `docker tag <id> ainode-comfyui:latest` switches back without building anything.
+
+Each overlay build stacks on top of the image it started from, so the earlier layers stay in the chain (they are shared, not duplicated) and the image only grows by the deltas. A full `docker compose build comfyui` is what starts a clean chain, at the price of the PyTorch download above.

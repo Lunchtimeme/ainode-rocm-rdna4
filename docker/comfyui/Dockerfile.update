@@ -14,13 +14,13 @@
 #
 # Usage:
 #   docker build -f docker/comfyui/Dockerfile.update \
-#       --build-arg BASE_IMAGE=ainode-comfyui:0.44.0 \
+#       --build-arg BASE_IMAGE=ainode-comfyui:latest \
 #       --build-arg COMFYUI_REF=v0.45.0 \
-#       -t ainode-comfyui:0.45.0 ./docker/comfyui
-#   # then point the comfyui service in compose.yml at the new tag
+#       -t ainode-comfyui:latest ./docker/comfyui
+#   docker compose up -d --no-deps comfyui
 #
-# BASE_IMAGE defaults to ainode-comfyui:latest, so tag your current image with
-# that name once and later bumps need no --build-arg for the base.
+# BASE_IMAGE defaults to ainode-comfyui:latest, so the base argument can be
+# omitted when the running image is tagged that way.
 #
 # Keep COMFYUI_REF in sync with docker/comfyui/Dockerfile so that a full rebuild
 # reproduces the same state.

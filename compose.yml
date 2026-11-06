@@ -97,11 +97,11 @@ services:
   # ============================================================================
   comfyui:
     <<: *common-render
-    # Pinned to a specific ComfyUI release; the tag matches COMFYUI_REF in
-    # docker/comfyui/Dockerfile. To move an already-built image to a newer
-    # release without re-downloading PyTorch, build the overlay in
-    # docker/comfyui/Dockerfile.update to this same tag (see README).
-    image: ainode-comfyui:0.44.0
+    # Built by docker/comfyui/Dockerfile; the ComfyUI version is fixed by
+    # COMFYUI_REF there, not by the tag. For a version bump on an existing
+    # image, build docker/comfyui/Dockerfile.update to this same tag (see
+    # README).
+    image: ainode-comfyui:latest
     build:
       context: .
       dockerfile: ./docker/comfyui/Dockerfile

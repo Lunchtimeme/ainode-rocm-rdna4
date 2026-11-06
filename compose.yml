@@ -4,6 +4,8 @@
 # AI services stack including:
 #   - ComfyUI:      Image/video generation with ROCm GPU support
 #   - Ollama:       LLM inference with ROCm GPU support
+#   - Bonsai 2:     Optional ternary 27B model served by the PrismML llama.cpp
+#                   fork next to Ollama (port 8080, see docker/llamacpp)
 #   - Open WebUI:   Web interface for Ollama
 #   - ChromaDB:     Vector database for RAG
 #   - Kokoro:       Text-to-Speech API
@@ -95,6 +97,11 @@ services:
   # ============================================================================
   comfyui:
     <<: *common-render
+    # Pinned to a specific ComfyUI release; the tag matches COMFYUI_REF in
+    # docker/comfyui/Dockerfile. To move an already-built image to a newer
+    # release without re-downloading PyTorch, build the overlay in
+    # docker/comfyui/Dockerfile.update to this same tag (see README).
+    image: ainode-comfyui:0.44.0
     build:
       context: .
       dockerfile: ./docker/comfyui/Dockerfile
@@ -181,10 +188,18 @@ services:
     hostname: ainode-ollama
     networks:
       - ainode-internal
+    # Optional Bonsai 2 server: the PrismML llama.cpp fork runs a second,
+    # OpenAI-compatible endpoint on port 8080 next to Ollama (port 11434).
+    # start.sh falls back to a plain `ollama serve` when the binaries or the
+    # model files are missing, so leaving this entrypoint in place is safe.
+    # See "Bonsai 2 via PrismML llama-server" in the README.
+    entrypoint: ["/bin/sh", "/opt/prism/start.sh"]
     # tmpfs with exec permission (required by Ollama)
     tmpfs:
       - /home/user/tmp:exec,mode=01777
     volumes:
+      # PrismML llama-server binaries, router preset and start script
+      - ./docker/llamacpp:/opt/prism:ro
       # Persistent model storage
       - ./data/ollama:/home/user/.ollama
       - ./data/common/models:/models

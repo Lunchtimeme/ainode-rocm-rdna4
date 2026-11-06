@@ -1,0 +1,41 @@
+# ==============================================================================
+# ComfyUI Version Overlay
+# ==============================================================================
+# Thin layer on top of an already-built ComfyUI image that moves ComfyUI itself
+# to a different upstream release without re-running the expensive package
+# layers.
+#
+# Why this exists:
+#   docker/comfyui/Dockerfile clones ComfyUI *before* installing PyTorch, so
+#   bumping the ComfyUI ref with a normal rebuild invalidates the torch nightly
+#   layer (6.8 GB), the requirements layer (3.0 GB) and the custom-node
+#   dependency layers (~2.9 GB). This overlay only replaces the checkout and
+#   the pip packages the release pins, which is tens-to-hundreds of MB.
+#
+# Usage:
+#   docker build -f docker/comfyui/Dockerfile.update \
+#       --build-arg BASE_IMAGE=ainode-comfyui:0.44.0 \
+#       --build-arg COMFYUI_REF=v0.45.0 \
+#       -t ainode-comfyui:0.45.0 ./docker/comfyui
+#   # then point the comfyui service in compose.yml at the new tag
+#
+# BASE_IMAGE defaults to ainode-comfyui:latest, so tag your current image with
+# that name once and later bumps need no --build-arg for the base.
+#
+# Keep COMFYUI_REF in sync with docker/comfyui/Dockerfile so that a full rebuild
+# reproduces the same state.
+# ==============================================================================
+ARG BASE_IMAGE=ainode-comfyui:latest
+FROM ${BASE_IMAGE}
+
+ARG COMFYUI_REF=v0.44.0
+
+USER user
+WORKDIR /home/user/app
+
+# PIP_CONSTRAINT is inherited from the parent image and pins torch/torchvision/
+# torchaudio/triton to the ROCm build, so nothing here can replace it.
+RUN git fetch --depth 1 origin refs/tags/${COMFYUI_REF}:refs/tags/${COMFYUI_REF} \
+ && git checkout -f ${COMFYUI_REF}
+
+RUN /home/user/venv/bin/pip install --no-cache-dir -r requirements.txt

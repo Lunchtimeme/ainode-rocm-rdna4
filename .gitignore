@@ -10,3 +10,9 @@
 
 # Local scratch file
 /unused commands
+
+# PrismML llama.cpp binaries are not redistributed with this repository.
+# Download a build for your platform and extract it into docker/llamacpp/.
+# See "Bonsai 2 via PrismML llama-server" in the README.
+/docker/llamacpp/*.tar.gz
+/docker/llamacpp/llama-prism-*/

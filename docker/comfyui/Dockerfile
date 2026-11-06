@@ -67,8 +67,13 @@ WORKDIR /home/user/app
 # Initialize Git LFS for model downloads
 RUN git lfs install
 
+# ComfyUI release to build. Keep this in sync with `COMFYUI_REF` in
+# docker/comfyui/Dockerfile.update, which is the cheap way to move an existing
+# image to a new release without re-downloading PyTorch (see that file).
+ARG COMFYUI_REF=v0.44.0
+
 # Clone ComfyUI repository
-RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git .
+RUN git clone --depth 1 --branch ${COMFYUI_REF} https://github.com/comfyanonymous/ComfyUI.git .
 
 # ------------------------------------------------------------------------------
 # Python dependencies installation

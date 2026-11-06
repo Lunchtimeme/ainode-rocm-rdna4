@@ -113,15 +113,26 @@ Follow these steps to get your AINode stack up and running:
     *   **Ollama (LLM backend):** `http://ainode-ollama:11434`
     *   **Bonsai 2 (optional, if installed):** `http://ainode-ollama:8080/v1`
 
+9.  **Optional: serve Bonsai 2 next to Ollama:**
+    If you want the ternary 27B model as a second endpoint, follow [Bonsai 2 via PrismML llama-server](#bonsai-2-via-prismml-llama-server). It needs the PrismML binaries extracted into `docker/llamacpp/`, the GGUF pack and its vision projector in `data/common/models/bonsai/`, and one entry in `docker/llamacpp/models.ini`. Ollama alone keeps working if you skip it.
+
 ## Bonsai 2 via PrismML llama-server
 
-The `ollama` container can serve [Bonsai 2 27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf) in addition to Ollama: a 27B-class reasoning model stored in ternary weights (~7.2 GB on disk instead of ~54 GB at FP16). The ternary packings are loaded by the PrismML build of `llama-server`, which runs as a second, OpenAI-compatible endpoint on port `8080` next to Ollama on `11434`.
+[Bonsai 2 27B](https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf) is a 27B-class reasoning model: Qwen 3.8 27B compressed to ternary weights, ~7.2 GB instead of ~54 GB at FP16. The `ollama` container serves it through the PrismML build of `llama-server` as a second, OpenAI-compatible endpoint on port `8080`, next to Ollama on `11434`. It has no container of its own - the binaries are bind-mounted from `docker/llamacpp` and `start.sh` starts both processes in the Ollama container.
 
-Neither the binaries nor the weights are part of this repository. Both are downloaded by you and are ignored by git.
+### Why a separate server is needed
 
-### Why share the Ollama container
+Ollama cannot load these weights. The ternary packings use the GGML tensor types `142` (`PQ2_0`) and `143` (`PTQ1_0`), which the llama.cpp engine bundled in Ollama does not implement. With `ollama-rocm` 0.32.0 (the Arch package version installed when this image was built) the import fails immediately:
 
-Both servers share the GPU, but only one of them holds VRAM at a time in practice: Bonsai is loaded when a request arrives and released again after `sleep-idle-seconds` (120 s by default), so ComfyUI or an Ollama model gets the VRAM back without restarting anything. If the binaries or model files are missing, `start.sh` skips Bonsai and starts Ollama as usual, so this is safe to leave enabled.
+```console
+$ ollama create bonsai -f Modelfile      # Modelfile: FROM /models/bonsai/...PQ2_0.gguf
+parsing GGUF
+Error: tensor "output.weight" size overflow
+```
+
+Upstream tracks this in [ggml-org/llama.cpp#29058](https://github.com/ggml-org/llama.cpp/issues/29058), where Ollama 0.34.2 is also reported to still have no size handling for types 142/143. There is a `Q2_0` pack of the same model (stock llama.cpp types, ~7.6 GB) that upstream llama.cpp can load from build `b11556` onward, but that requires an engine built from `b11556` or newer - and an older engine loads it *without warning* and produces incoherent text. Ollama bundles its own engine, so until it ships one that new, the PrismML `llama-server` is the working route.
+
+Everything below is optional. Without the binaries and the weights, `start.sh` skips Bonsai and starts Ollama alone, so the `entrypoint` in `compose.yml` can stay as it is.
 
 ### 1. Binaries
 
@@ -133,11 +144,16 @@ tar -xf llama-prism-bin-ubuntu-rocm-7.2-x64.tar.gz   # use the archive you downl
 ls                                                   # -> llama-prism-<build>/, models.ini, start.sh
 ```
 
-`start.sh` locates `llama-server` by itself (newest `llama-prism-*` directory, or `PRISM_SERVER=/path/to/llama-server`), so the directory name is irrelevant.
+The binaries are not part of this repository and are git-ignored. `start.sh` locates `llama-server` by itself (newest `llama-prism-*` directory, or `PRISM_SERVER=/path/to/llama-server`), so the directory name is irrelevant.
 
 ### 2. Weights
 
-Put the GGUF pack and the optional vision projector into `data/common/models/bonsai/`:
+Save the GGUF pack and the optional vision projector under `data/common/models/bonsai/`, which is `/models` inside the container:
+
+```bash
+mkdir -p data/common/models/bonsai
+mv ~/Downloads/Ternary-Bonsai-2-27B-*.gguf data/common/models/bonsai/
+```
 
 ```
 data/common/models/bonsai/
@@ -145,34 +161,50 @@ data/common/models/bonsai/
 └── mmproj-Q8_0.gguf                                     # vision tower, ~0.6 GB
 ```
 
-`data/common/models` is mounted as `/models` inside the container, so those files are `/models/bonsai/...`. Upstream packs are named `Ternary-Bonsai-2-27B-PQ2_0.gguf` and `Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf`; a fine-tune with the same packing works the same way, point `models.ini` at it.
+The upstream packs are named `Ternary-Bonsai-2-27B-PQ2_0.gguf` (language model) and `Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf` (vision). A fine-tune with the same packing, like the one above, works the same way. Inside the container those files are `/models/bonsai/...`; `data/common/models` is git-ignored, so the weights never end up in the repository.
 
-### 3. Configuration
+### 3. Register the model
 
-`docker/llamacpp/models.ini` is a `llama-server` router preset: `[*]` holds the shared defaults and every `[section]` becomes a model id. The shipped defaults target a 16 GB card:
+Placing a file in the folder is **not** enough. `start.sh` starts the router with `--models-preset /opt/prism/models.ini`, so every `[section]` in that file is exactly one model, and the section name is the model id clients see. Add a section for the pack you downloaded, or edit the one that ships with the repository:
 
 ```ini
-[*]
-n-gpu-layers = 99
-ctx-size = 131072
-cache-type-k = q8_0
-cache-type-v = q8_0
-flash-attn = true
-sleep-idle-seconds = 120
+[bonsai2-27b-heretic]
+model = /models/bonsai/Ternary-Bonsai-2-27B-Uncensored-Heretic-PQ2_0.gguf
+mmproj = /models/bonsai/mmproj-Q8_0.gguf
 ```
 
-The section name (`[bonsai2-27b-heretic]`) is what Open WebUI lists, rename it freely. Editing the preset needs no rebuild, the directory is mounted read-only at `/opt/prism`; just restart the container:
+`model` is the only required key. Drop `mmproj` if you do not need image input, and rename the section freely - that name is what shows up in Open WebUI. The `[*]` block above the sections applies to all of them: context size, KV cache type, sampling and `sleep-idle-seconds`.
+
+The folder is not scanned automatically: the router has a `--models-dir` mode for that, but this stack uses the preset because it carries the per-model settings and the vision projector. The directory is mounted read-only at `/opt/prism`, so a change needs a container restart, not a rebuild:
 
 ```bash
 docker compose restart ollama
-docker exec ainode-ollama tail -f /tmp/prism-server.log
+docker exec ainode-ollama tail -n 20 /tmp/prism-server.log     # shows the preset it loaded
+docker exec ainode-ollama curl -s http://127.0.0.1:8080/v1/models
 ```
 
-### 4. Connect it
+### 4. Connect it to Open WebUI
 
-In Open WebUI, add an OpenAI-compatible connection pointing at `http://ainode-ollama:8080/v1` (Settings → Connections). From the host the port is not published; reach it through the stack or add a mapping to the `ollama` service if you want direct access.
+The router speaks the OpenAI chat-completions API, so it is added as a second provider next to the existing Ollama connection - both listings appear in the same model selector:
 
-Disable it at any time with `PRISM_ENABLE=0` in the environment of the `ollama` service, or by removing the binaries. `start.sh` always ends with `exec ollama serve`, so the container never loses its LLM backend.
+1.  **Admin Panel -> Settings -> Connections -> +** (Add Connection).
+2.  **Type:** `OpenAI`. **Base URL:** `http://ainode-ollama:8080/v1`. **API key:** empty, the router has no authentication; some Open WebUI versions insist on a value, any placeholder works.
+3.  Save, then refresh the model list. `bonsai2-27b-heretic` (or whatever you called the section) is selectable alongside the Ollama models.
+
+The endpoint is only reachable from inside the stack; no host port is published. Add a mapping to the `ollama` service if you want to call it from the host or from another machine.
+
+### 5. VRAM is shared - you manage it
+
+Bonsai, Ollama and ComfyUI all use the same GPU. The router loads a model on the first request and releases it after `sleep-idle-seconds` (120 s by default), which is the only automatic protection - it does not know what the rest of the stack is doing, and it is not aware of ComfyUI at all. Keeping the two apart is up to you:
+
+*   A loaded Bonsai 2 27B holds ~7.2 GB of weights, ~4 GiB of KV cache at the configured `ctx-size = 131072` with `q8_0`, and ~0.6 GB for the vision projector - most of a 16 GB card.
+*   If ComfyUI or a large Ollama model is holding VRAM when a Bonsai request arrives, the load fails with `cudaMalloc failed: out of memory` and the request returns HTTP 500. The reverse happens too: a ComfyUI model load can fail while Bonsai is resident.
+*   Serialise the usage: let one side idle out (or stop it) before starting the other. Lowering `ctx-size`, switching the KV cache to `q4_0`, or dropping `mmproj` shrinks Bonsai if you need it to coexist with something else.
+*   ComfyUI keeps its models resident until it needs the space. To hand the GPU over immediately: `docker exec ainode-comfyui /home/user/venv/bin/python -c "import json,urllib.request;urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8188/free',data=json.dumps({'unload_models':True,'free_memory':True}).encode(),headers={'Content-Type':'application/json'}))"`.
+
+### Disabling it
+
+Set `PRISM_ENABLE=0` in the environment of the `ollama` service, or remove the binaries / `models.ini`. `start.sh` always ends with `exec ollama serve`, so the container never loses its LLM backend either way.
 
 ## Updating ComfyUI
 

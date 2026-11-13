@@ -1,15 +1,63 @@
 # Example SearXNG configuration for AINode.
 # Copy to data/searxng/settings.yml and set your own secret_key.
-# Keep use_default_settings enabled to inherit SearXNG defaults.
+#
+# `use_default_settings: true` inherits SearXNG's built-in engine catalogue
+# and defaults; the sections below only override what this stack needs.
+# After editing, restart the service: docker compose restart searxng
 
 use_default_settings: true
 
+general:
+  instance_name: "AINode SearXNG"
+
 server:
-  # Generate a unique secret, e.g. with: openssl rand -hex 32
   secret_key: "REPLACE_WITH_YOUR_OWN_RANDOM_SECRET"
+  limiter: false
+  public_instance: false
 
 search:
-  # JSON is required for Open WebUI's SearXNG integration.
   formats:
     - html
     - json
+  safe_search: 0
+  default_lang: "auto"
+  autocomplete: ""
+
+outgoing:
+  request_timeout: 4.0
+  max_request_timeout: 8.0
+
+engines:
+  # Working general indexes. Bing, Yandex, PrivacyWall and DuckDuckGo-web are
+  # disabled in SearXNG's default catalogue; Brave and DuckDuckGo-html are on
+  # by default. Together these six give independent coverage with no API key.
+  - name: bing
+    disabled: false
+    weight: 1.2
+  - name: brave
+    disabled: false
+    weight: 1.2
+  - name: duckduckgo web
+    disabled: false
+  - name: yandex
+    disabled: false
+  - name: privacywall
+    disabled: false
+    weight: 0.8
+  - name: google cse
+    weight: 1.5
+
+  # DuckDuckGo's HTML endpoint is enabled by default but answers this host
+  # with a CAPTCHA. The "duckduckgo web" engine above uses a different
+  # endpoint and works.
+  - name: duckduckgo
+    disabled: true
+
+  # Seznam is disabled by default and its parser is broken in 2026.11
+  # ("parsing error" on every query), so it stays off.
+  # Startpage and Mojeek are marked `inactive` upstream because they now use
+  # proof-of-work CAPTCHAs; they cannot be enabled from this file.
+  #
+  # Also tested but unusable here: google (access denied), qwant (access
+  # denied), yahoo (no results), yep (HTTP error), mwmbl (duplicate-heavy),
+  # wiby (tiny index). They are off by default, so no override is needed.

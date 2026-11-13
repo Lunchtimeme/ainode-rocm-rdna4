@@ -13,6 +13,10 @@
 
 # PrismML llama.cpp binaries are not redistributed with this repository.
 # Download a build for your platform and extract it into docker/llamacpp/.
-# See "Bonsai 2 via PrismML llama-server" in the README.
+# See AGENTS.md for the Bonsai 2 setup.
 /docker/llamacpp/*.tar.gz
 /docker/llamacpp/llama-prism-*/
+
+# Python bytecode from example tools
+__pycache__/
+*.py[cod]

@@ -1,2 +1,15 @@
-data/ollama/models/
-data/common/models/
+# Build context is the repo root for most services. Everything runtime-only is
+# excluded so a rebuild sends kilobytes, not hundreds of gigabytes:
+#   data/            models, vector store, Open WebUI data (~248 GB)
+#   .git/            history (~194 GB)
+#   docker/llamacpp/ PrismML binaries (bind-mounted at runtime, ~724 MB)
+#   examples/, ssl/  documentation and local certificates
+data/
+.git/
+docker/llamacpp/
+examples/
+ssl/
+
+# Never ship local secrets in a build context.
+.env
+.env.*

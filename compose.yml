@@ -9,7 +9,8 @@
 #   - Open WebUI:   Web interface for Ollama
 #   - ChromaDB:     Vector database for RAG
 #   - Kokoro:       Text-to-Speech API
-#   - nginx:        Reverse proxy with SSL termination
+#   - Crawl4AI:     Self-hosted web extraction API (Hermes + LAN clients)
+#   - nginx:        Reverse Proxy with SSL termination
 #
 # Prerequisites:
 #   Before running docker-compose, build the base image:
@@ -267,7 +268,39 @@ services:
     volumes:
       - ./data/searxng:/etc/searxng
     environment:
-      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_BASE_URL=http://searxng.localdomain/
+
+  # ============================================================================
+  # Crawl4AI - Web Extraction API
+  # ============================================================================
+  # Self-hosted extraction backend for Hermes and any LAN client.
+  # Exposed through the reverse proxy as crawl4ai.localdomain; no host port.
+  # The upstream image's own HEALTHCHECK (redis ping + GET /health) is reused.
+  # ============================================================================
+  crawl4ai:
+    <<: *common
+    image: ainode-crawl4ai:latest
+    build:
+      # Tiny context: the Dockerfile only pins the upstream image, so there is
+      # no reason to ship the stack directory to the builder.
+      context: ./docker/crawl4ai
+      dockerfile: Dockerfile
+    container_name: ainode-crawl4ai
+    hostname: ainode-crawl4ai
+    networks:
+      - ainode-internal
+    # Chromium's default 64 MB /dev/shm breaks under load.
+    shm_size: "1g"
+    # The browser pool is the memory hog; cap it so a runaway crawl cannot
+    # take the host down with it.
+    mem_limit: 4g
+    environment:
+      # Without a token the entrypoint binds container loopback only and the
+      # reverse proxy gets connection refused. Value lives in ~/ainode/.env.
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN}
+    volumes:
+      # Runtime config (gitignored); versioned mirror in examples/crawl4ai/.
+      - ./data/crawl4ai/config.yml:/app/config.yml:ro
 
   # ============================================================================
   # Reverse Proxy (nginx)

@@ -28,8 +28,15 @@
 # ==============================================================================
 set -euo pipefail
 
+# Generated files contain the Crawl4AI and Strata bearer tokens. Keep them
+# private from the moment they are created, so an interrupted run cannot leave
+# a world-readable file holding a credential.
+umask 077
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname -- "$SCRIPT_DIR")
+. "$SCRIPT_DIR/lib-env.sh"
+
 ENV_FILE=${AINODE_ENV_FILE:-$ROOT/.env}
 TEMPLATE_DIR=${AINODE_TEMPLATE_DIR:-$ROOT/examples/reverseproxy}
 OUT_DIR=${AINODE_VHOST_DIR:-$ROOT/data/reverseproxy/sites-enabled}
@@ -45,36 +52,50 @@ for arg in "$@"; do
     esac
 done
 
+ainode_require_cmd envsubst \
+    "the vhost templates are rendered with it (nginx cannot read environment variables)" \
+    "pacman -S gettext | apt install gettext-base | dnf install gettext" || exit 1
+
 [ -f "$TEMPLATE_DIR/00map" ] || { echo "no templates in $TEMPLATE_DIR" >&2; exit 1; }
 
-# ------------------------------------------------------------------------------
-# Load .env without eval: KEY=VALUE, optional surrounding quotes, no commands.
-# ------------------------------------------------------------------------------
-if [ -f "$ENV_FILE" ]; then
-    set -a
-    while IFS='=' read -r key val || [ -n "$key" ]; do
-        case $key in ''|'#'*) continue ;; esac
-        key=${key//[[:space:]]/}
-        # Shell environment wins over .env, matching `docker compose` precedence
-        # (otherwise `COMPOSE_PROFILES=x scripts/render-config.sh` would be
-        # silently overridden by the file and nothing would be skipped).
-        [ -n "${!key+x}" ] && continue
-        case $val in
-            \"*\") val=${val#\"}; val=${val%\"} ;;
-            \'*\') val=${val#\'}; val=${val%\'} ;;
-        esac
-        export "$key=$val"
-    done < "$ENV_FILE"
-    set +a
-else
-    echo "warning: $ENV_FILE not found, using defaults" >&2
-fi
+ainode_load_env "$ENV_FILE"
+[ -f "$ENV_FILE" ] || echo "warning: $ENV_FILE not found, using defaults" >&2
 
-PROFILES=",${COMPOSE_PROFILES:-},"
 SUBST_VARS='${AINODE_PREFIX} ${AINODE_LAN_DOMAIN} ${CRAWL4AI_API_TOKEN} ${STRATA_API_KEY}'
-
 export AINODE_PREFIX=${AINODE_PREFIX:-ainode}
 export AINODE_LAN_DOMAIN=${AINODE_LAN_DOMAIN:-localdomain}
+# Mirror the compose default for the template conditions: compose passes
+# PRISM_ENABLE=${PRISM_ENABLE:-1} to the ollama service, so "unset" means on.
+export PRISM_ENABLE=${PRISM_ENABLE:-1}
+
+# ------------------------------------------------------------------------------
+# Preflight: runtime config files that compose mounts by path
+# ------------------------------------------------------------------------------
+# A bind mount whose host path does not exist is created as a *directory*. For
+# Crawl4AI that means /app/config.yml is a directory and the service never
+# starts - and the directory it leaves behind is owned by root, so the obvious
+# retry then fails with permission denied. Catch it before the user does.
+preflight=0
+if ainode_has_profile crawl4ai && [ ! -f "$ROOT/data/crawl4ai/config.yml" ]; then
+    cat >&2 <<EOF
+error: data/crawl4ai/config.yml is missing.
+       compose mounts it read-only into the container; a missing file is turned
+       into an empty directory and Crawl4AI will not start. Create it first:
+         mkdir -p data/crawl4ai
+         cp examples/crawl4ai/config.yml data/crawl4ai/config.yml
+EOF
+    preflight=1
+fi
+if ainode_has_profile searxng && [ ! -f "$ROOT/data/searxng/settings.yml" ]; then
+    cat >&2 <<EOF
+warning: data/searxng/settings.yml is missing.
+         SearXNG will generate its own, which serves HTML but not the JSON API
+         that Open WebUI and agent clients need. Seed it from the example:
+           mkdir -p data/searxng
+           cp examples/searxng/settings.yml data/searxng/settings.yml
+EOF
+fi
+[ "$preflight" = 0 ] || exit 1
 
 wanted=$(mktemp)
 checkdir="./$(basename "$wanted").out"
@@ -88,7 +109,7 @@ should_render() {
     case $kind in
         none) return 0 ;;
         profile)
-            case $PROFILES in *",$needle,"*) return 0 ;; esac
+            if ainode_has_profile "$needle"; then return 0; fi
             echo "  skip $(basename "$file"): profile '$needle' not enabled" >&2
             return 1 ;;
         var)
@@ -104,8 +125,8 @@ should_render() {
 render_one() {
     local src=$1 dst=$2 name
     name=$(basename "$src")
-    # A token that is empty would render "Authorization: Bearer " and turn a
-    # working vhost into a 401 farm; better to not publish it at all.
+    # An empty token would render an Authorization header with no credential and
+    # turn a working vhost into a 401 farm; better to not publish it at all.
     case $name in
         40crawl4ai) [ -n "${CRAWL4AI_API_TOKEN:-}" ] || { echo "  skip $name: CRAWL4AI_API_TOKEN is empty" >&2; return 1; } ;;
         60strata)   [ -n "${STRATA_API_KEY:-}" ]     || { echo "  skip $name: STRATA_API_KEY is empty" >&2; return 1; } ;;
@@ -117,6 +138,7 @@ render_one() {
         envsubst "$SUBST_VARS" < "$src"
     } > "$tmpout" || { echo "  FAILED $name: cannot write $tmpout" >&2; rm -f "$tmpout"; return 1; }
     mv -f "$tmpout" "$dst" || { echo "  FAILED $name: cannot replace $dst" >&2; rm -f "$tmpout"; return 1; }
+    chmod 600 "$dst"
     echo "  $name"
     echo "$name" >> "$wanted"
 }
@@ -146,8 +168,8 @@ mkdir -p "$OUT_DIR"
 if [ ! -w "$OUT_DIR" ]; then
     cat >&2 <<EOF
 error: $OUT_DIR is not writable by $(id -un).
-       It is runtime config owned by root (created by an older install).
-       Fix once with:
+       It is runtime config owned by another user: an older install, or the
+       container itself when a mount was created empty. Fix once with:
          sudo chown -R $(id -u):$(id -g) $(dirname "$OUT_DIR")
        nginx reads these files as root, so ownership does not affect serving.
 EOF
@@ -174,8 +196,8 @@ done
 if [ "$MODE" = reload ]; then
     container="${AINODE_PREFIX}-reverseproxy"
     echo "testing and reloading $container" >&2
-    docker exec "$container" nginx -t
-    docker exec "$container" nginx -s reload
+    "$AINODE_DOCKER" exec "$container" nginx -t
+    "$AINODE_DOCKER" exec "$container" nginx -s reload
 fi
 
 echo "done" >&2

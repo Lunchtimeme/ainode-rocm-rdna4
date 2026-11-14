@@ -1,0 +1,399 @@
+name: ainode
+services:
+  chroma:
+    restart: unless-stopped
+    container_name: ainode-chroma
+    hostname: ainode-chroma
+    logging:
+      driver: none
+    networks:
+      ainode-internal: null
+    volumes:
+      - type: bind
+        source: <repo>/data/chroma
+        target: /home/user/app/chroma
+        bind: {}
+      - type: tmpfs
+        target: /home/user/.cache
+        tmpfs:
+          mode: 1023
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          mode: 1023
+    build:
+      context: <repo>
+      dockerfile: ./docker/chroma/Dockerfile
+      args:
+        CHROMADB_VERSION: 0.6.3
+        REBUILD_HNSWLIB: "false"
+        USER_GID: "100"
+        USER_UID: "1000"
+  comfyui:
+    profiles:
+      - comfyui
+    restart: unless-stopped
+    container_name: ainode-comfyui
+    devices:
+      - source: /dev/kfd
+        target: /dev/kfd
+        permissions: rwm
+      - source: /dev/dri
+        target: /dev/dri
+        permissions: rwm
+    environment:
+      AMD_ENABLE_MIOPEN: "1"
+      HIP_VISIBLE_DEVICES: "0"
+      MIOPEN_FIND_MODE: "2"
+      PYTORCH_ALLOC_CONF: garbage_collection_threshold:0.8,max_split_size_mb:512
+      ROCR_VISIBLE_DEVICES: "0"
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+    hostname: ainode-comfyui
+    image: ainode-comfyui:latest
+    logging:
+      driver: none
+    networks:
+      ainode-internal: null
+    volumes:
+      - type: bind
+        source: <repo>/data/comfyui/user
+        target: /home/user/app/user
+        bind: {}
+      - type: bind
+        source: <repo>/data/comfyui/custom_nodes
+        target: /home/user/app/custom_nodes
+        bind: {}
+      - type: bind
+        source: <repo>/data/common/models
+        target: /home/user/app/models
+        bind: {}
+      - type: tmpfs
+        target: /home/user/.cache
+        tmpfs:
+          mode: 1023
+      - type: tmpfs
+        target: /home/user/app/input
+        tmpfs:
+          mode: 1023
+      - type: tmpfs
+        target: /home/user/app/output
+        tmpfs:
+          mode: 1023
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          mode: 1023
+    build:
+      context: <repo>
+      dockerfile: ./docker/comfyui/Dockerfile
+      args:
+        AINODE_GPU_ARCH: gfx1201
+        COMFYUI_REF: v0.44.0
+        RENDER_GID: "28"
+        USER_GID: "100"
+        USER_UID: "1000"
+        VIDEO_GID: "27"
+  crawl4ai:
+    profiles:
+      - crawl4ai
+    restart: unless-stopped
+    container_name: ainode-crawl4ai
+    environment:
+      CRAWL4AI_API_TOKEN: <redacted>
+    hostname: ainode-crawl4ai
+    image: ainode-crawl4ai:latest
+    logging:
+      driver: none
+    mem_limit: "4294967296"
+    networks:
+      ainode-internal: null
+    shm_size: "1073741824"
+    volumes:
+      - type: bind
+        source: <repo>/data/crawl4ai/config.yml
+        target: /app/config.yml
+        read_only: true
+        bind: {}
+    build:
+      context: <repo>/docker/crawl4ai
+      dockerfile: Dockerfile
+  kokoro-fastapi:
+    profiles:
+      - kokoro
+    restart: unless-stopped
+    container_name: ainode-kokoro-fastapi
+    devices:
+      - source: /dev/kfd
+        target: /dev/kfd
+        permissions: rwm
+      - source: /dev/dri
+        target: /dev/dri
+        permissions: rwm
+    hostname: ainode-kokoro-fastapi
+    logging:
+      driver: none
+    networks:
+      ainode-internal: null
+    tmpfs:
+      - /tmp:exec
+    volumes:
+      - type: tmpfs
+        target: /home/user/.cache
+        tmpfs:
+          mode: 1023
+      - type: tmpfs
+        target: /home/user/app/output
+        tmpfs:
+          mode: 1023
+    build:
+      context: <repo>
+      dockerfile: ./docker/kokoro-fastapi/Dockerfile
+      args:
+        RENDER_GID: "28"
+        USER_GID: "100"
+        USER_UID: "1000"
+        VIDEO_GID: "27"
+  ollama:
+    restart: unless-stopped
+    container_name: ainode-ollama
+    devices:
+      - source: /dev/kfd
+        target: /dev/kfd
+        permissions: rwm
+      - source: /dev/dri
+        target: /dev/dri
+        permissions: rwm
+    entrypoint:
+      - /bin/sh
+      - /opt/prism/start.sh
+    environment:
+      PRISM_ENABLE: "1"
+    hostname: ainode-ollama
+    logging:
+      driver: none
+    networks:
+      ainode-internal: null
+    tmpfs:
+      - /home/user/tmp:exec,mode=01777
+    volumes:
+      - type: bind
+        source: <repo>/docker/llamacpp
+        target: /opt/prism
+        read_only: true
+        bind: {}
+      - type: bind
+        source: <repo>/data/ollama
+        target: /home/user/.ollama
+        bind: {}
+      - type: bind
+        source: <repo>/data/common/models
+        target: /models
+        bind: {}
+      - type: tmpfs
+        target: /home/user/.cache
+        tmpfs:
+          mode: 1023
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          mode: 1023
+    build:
+      context: <repo>
+      dockerfile: ./docker/ollama/Dockerfile
+      args:
+        RENDER_GID: "28"
+        USER_GID: "100"
+        USER_UID: "1000"
+        VIDEO_GID: "27"
+  openwebui:
+    restart: unless-stopped
+    container_name: ainode-openwebui
+    devices:
+      - source: /dev/kfd
+        target: /dev/kfd
+        permissions: rwm
+      - source: /dev/dri
+        target: /dev/dri
+        permissions: rwm
+    environment:
+      CHROMA_HTTP_HOST: ainode-chroma
+      DEFAULT_USER_ROLE: admin
+      ENABLE_SIGNUP: "true"
+      OLLAMA_BASE_URL: http://ainode-ollama:11434
+      WEBUI_SECRET_KEY: ""
+    hostname: ainode-openwebui
+    logging:
+      driver: none
+    networks:
+      ainode-internal: null
+    volumes:
+      - type: bind
+        source: <repo>/data/openwebui/data
+        target: /home/user/app/backend/data
+        bind: {}
+      - type: tmpfs
+        target: /home/user/.cache
+        tmpfs:
+          mode: 1023
+      - type: tmpfs
+        target: /home/user/app/backend/data/cache
+        tmpfs:
+          mode: 1023
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          mode: 1023
+    build:
+      context: <repo>
+      dockerfile: ./docker/openwebui/Dockerfile
+      args:
+        USER_GID: "100"
+        USER_UID: "1000"
+    depends_on:
+      chroma:
+        condition: service_started
+        required: true
+  reverseproxy:
+    restart: unless-stopped
+    container_name: ainode-reverseproxy
+    hostname: ainode-reverseproxy
+    logging:
+      driver: none
+    networks:
+      ainode-internal: null
+    volumes:
+      - type: bind
+        source: <repo>/data/reverseproxy/sites-enabled
+        target: /etc/nginx/sites-enabled
+        bind: {}
+      - type: bind
+        source: <repo>/data/reverseproxy/htpasswd
+        target: /etc/nginx/htpasswd
+        bind: {}
+      - type: bind
+        source: <repo>/ssl
+        target: /etc/nginx/certs
+        bind: {}
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          mode: 1023
+    build:
+      context: <repo>
+      dockerfile: ./docker/reverseproxy/Dockerfile
+    depends_on:
+      comfyui:
+        condition: service_started
+        required: false
+      ollama:
+        condition: service_started
+        required: true
+      openwebui:
+        condition: service_started
+        required: true
+    ports:
+      - mode: ingress
+        target: 80
+        published: "80"
+        protocol: tcp
+      - mode: ingress
+        target: 443
+        published: "443"
+        protocol: tcp
+      - mode: ingress
+        target: 5000
+        published: "5000"
+        protocol: tcp
+      - mode: ingress
+        target: 11434
+        published: "11434"
+        protocol: tcp
+  searxng:
+    profiles:
+      - searxng
+    restart: unless-stopped
+    container_name: ainode-searxng
+    environment:
+      SEARXNG_BASE_URL: http://searxng.localdomain/
+      SEARXNG_SECRET: <redacted>
+    hostname: ainode-searxng
+    image: searxng/searxng:latest
+    logging:
+      driver: none
+    networks:
+      ainode-internal: null
+    volumes:
+      - type: bind
+        source: <repo>/data/searxng
+        target: /etc/searxng
+        bind: {}
+    ports:
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 8080
+        published: "8080"
+        protocol: tcp
+  strata:
+    profiles:
+      - strata
+    restart: unless-stopped
+    container_name: ainode-strata
+    devices:
+      - source: /dev/kfd
+        target: /dev/kfd
+        permissions: rwm
+      - source: /dev/dri
+        target: /dev/dri
+        permissions: rwm
+    environment:
+      API_KEY: <redacted>
+      CONTEXT: 32k
+      MODEL: IQ3_XXS
+      MODEL_PATH: /models/strata
+      TUNE: skip
+      VISION: "off"
+    hostname: ainode-strata
+    image: ghcr.io/niko1221/strata:0.2.13-rocm-gfx120x
+    logging:
+      driver: none
+    networks:
+      ainode-internal: null
+    shm_size: "2147483648"
+    stop_grace_period: 2m0s
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - type: bind
+        source: <repo>/data/strata
+        target: /data
+        bind: {}
+      - type: bind
+        source: <repo>/data/common/models
+        target: /models
+        read_only: true
+        bind: {}
+networks:
+  ainode-internal:
+    name: ainode-internal
+    driver: bridge
+x-build-args-gpu:
+  RENDER_GID: "28"
+  USER_GID: "100"
+  USER_UID: "1000"
+  VIDEO_GID: "27"
+x-build-args-user:
+  USER_GID: "100"
+  USER_UID: "1000"
+x-common:
+  logging:
+    driver: none
+  restart: unless-stopped
+x-common-render:
+  devices:
+    - /dev/kfd
+    - /dev/dri
+  logging:
+    driver: none
+  restart: unless-stopped

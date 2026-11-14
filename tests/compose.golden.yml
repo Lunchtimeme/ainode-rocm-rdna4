@@ -48,6 +48,9 @@ services:
       PYTORCH_ALLOC_CONF: garbage_collection_threshold:0.8,max_split_size_mb:512
       ROCR_VISIBLE_DEVICES: "0"
       TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+    group_add:
+      - "28"
+      - "27"
     hostname: ainode-comfyui
     image: ainode-comfyui:latest
     logging:
@@ -129,6 +132,9 @@ services:
       - source: /dev/dri
         target: /dev/dri
         permissions: rwm
+    group_add:
+      - "28"
+      - "27"
     hostname: ainode-kokoro-fastapi
     logging:
       driver: none
@@ -168,6 +174,9 @@ services:
       - /opt/prism/start.sh
     environment:
       PRISM_ENABLE: "1"
+    group_add:
+      - "28"
+      - "27"
     hostname: ainode-ollama
     logging:
       driver: none
@@ -221,6 +230,9 @@ services:
       ENABLE_SIGNUP: "true"
       OLLAMA_BASE_URL: http://ainode-ollama:11434
       WEBUI_SECRET_KEY: ""
+    group_add:
+      - "28"
+      - "27"
     hostname: ainode-openwebui
     logging:
       driver: none
@@ -352,6 +364,9 @@ services:
       MODEL_PATH: /models/strata
       TUNE: skip
       VISION: "off"
+    group_add:
+      - "28"
+      - "27"
     hostname: ainode-strata
     image: ghcr.io/niko1221/strata:0.2.13-rocm-gfx120x
     logging:
@@ -394,6 +409,9 @@ x-common-render:
   devices:
     - /dev/kfd
     - /dev/dri
+  group_add:
+    - "28"
+    - "27"
   logging:
     driver: none
   restart: unless-stopped

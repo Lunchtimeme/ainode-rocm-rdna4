@@ -112,12 +112,12 @@ That is why `.env.example` starts with only `searxng,crawl4ai`: it gets you a wo
     ```
     Everything host-specific lives there, and `.env.example` documents every variable. Three things are worth doing before the first build:
 
-    * **Host ids.** `AINODE_USER_UID` is your `id -u`. `AINODE_RENDER_GID` and `AINODE_VIDEO_GID` come from:
+    * **Host ids.** `AINODE_USER_UID` is your `id -u` and is compiled into the images, so set it before the first build. The two GPU group ids come from:
       ```bash
       getent group render | cut -d: -f3
       getent group video  | cut -d: -f3
       ```
-      They are compiled into the images, so set them now rather than rebuilding later. Wrong GPU group ids are usually invisible (the device nodes are world-writable on most systems) until a stricter `udev` rule appears.
+      They are applied at container start, not at build time, so getting them wrong costs a restart rather than a rebuild. Wrong values are usually invisible (the device nodes are world-writable on most systems) until a stricter `udev` rule appears.
     * **`COMPOSE_PROFILES`** - which services this machine runs. Always on: `ollama`, `openwebui`, `chroma`, `reverseproxy`. Optional: `comfyui`, `kokoro`, `searxng`, `crawl4ai`, `strata`. A service whose profile is not listed is neither built nor started.
     * **The secrets.** `CRAWL4AI_API_TOKEN` and `SEARXNG_SECRET`, generated with `openssl rand -hex 24`. `WEBUI_SECRET_KEY` may stay empty, in which case Open WebUI generates and stores its own.
 

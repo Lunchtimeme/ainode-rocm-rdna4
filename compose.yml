@@ -47,6 +47,13 @@ x-common-render: &common-render
   devices:
     - /dev/kfd      # ROCm kernel interface
     - /dev/dri      # Direct Rendering Infrastructure
+  # Host group ids that own the GPU device nodes. Applied when the container
+  # starts, so getting them wrong costs a restart, not a rebuild - the same ids
+  # used to be baked into the images with groupmod. The build args below still
+  # keep the image's own group *names* aligned; these guarantee access.
+  group_add:
+    - "${AINODE_RENDER_GID:-28}"
+    - "${AINODE_VIDEO_GID:-27}"
 
 # Common build args for user/group ID matching
 x-build-args-user: &build-args-user

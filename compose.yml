@@ -116,6 +116,10 @@ services:
       dockerfile: ./docker/comfyui/Dockerfile
       args:
         <<: *build-args-gpu
+        # Both are honoured only at build time. Wiring them here is what makes
+        # AINODE_COMFYUI_REF / AINODE_GPU_ARCH in .env mean anything.
+        COMFYUI_REF: ${AINODE_COMFYUI_REF:-v0.44.0}
+        AINODE_GPU_ARCH: ${AINODE_GPU_ARCH:-gfx1201}
     container_name: ${AINODE_PREFIX:-ainode}-comfyui
     hostname: ${AINODE_PREFIX:-ainode}-comfyui
     environment:
@@ -252,6 +256,10 @@ services:
       # Set false after creating the admin account.
       - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
       - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-admin}
+      # These were baked into the image as ainode-ollama / ainode-chroma, so a
+      # custom AINODE_PREFIX silently broke both connections. Runtime env wins.
+      - OLLAMA_BASE_URL=http://${AINODE_PREFIX:-ainode}-ollama:11434
+      - CHROMA_HTTP_HOST=${AINODE_PREFIX:-ainode}-chroma
     depends_on:
       - chroma
     networks:
@@ -288,7 +296,10 @@ services:
     networks:
       - ainode-internal
     ports:
-      - "${AINODE_SEARXNG_PORT:-8080}:8080" # Allows you to access the search engine directly in your browser
+      # Loopback only by default: the reverse proxy is the LAN entry point, and
+      # Docker publishes on every interface otherwise. Set
+      # AINODE_SEARXNG_BIND=0.0.0.0 in .env to expose it to the LAN directly.
+      - "${AINODE_SEARXNG_BIND:-127.0.0.1}:${AINODE_SEARXNG_PORT:-8080}:8080"
     volumes:
       - ./data/searxng:/etc/searxng
     environment:

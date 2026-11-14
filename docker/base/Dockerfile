@@ -41,7 +41,7 @@ ENV PYTHONUNBUFFERED=1
 #
 # We keep the sync database until after Python is built.
 # ------------------------------------------------------------------------------
-RUN groupmod -g ${USER_GID} users \
+RUN --mount=type=cache,target=/var/cache/pacman/pkg groupmod -g ${USER_GID} users \
     && useradd -u ${USER_UID} -r -g users -s /sbin/nologin -m -c "User" user \
     && echo "user ALL=(ALL) NOPASSWD: /usr/bin/pacman" >> /etc/sudoers \
     # Update system and install Python build dependencies
@@ -55,7 +55,6 @@ RUN groupmod -g ${USER_GID} users \
         libnsl \
         libxcrypt \
     # Only clean package cache, keep sync database for makepkg
-    && rm -rf /var/cache/pacman/pkg/* \
     # Prepare directories
     && mkdir -p /home/user/aur \
     && chown -R user:users /home/user
@@ -84,7 +83,6 @@ RUN git clone --depth 1 https://aur.archlinux.org/python313.git \
 # ------------------------------------------------------------------------------
 USER root
 RUN rm -rf /var/lib/pacman/sync/* \
-    && rm -rf /var/cache/pacman/pkg/* \
     # Remove sudo privileges - no longer needed after Python build
     && sed -i '/user ALL=(ALL) NOPASSWD: \/usr\/bin\/pacman/d' /etc/sudoers \
     # Make python3.13 the default
@@ -101,7 +99,7 @@ RUN python -m venv /home/user/venv
 
 ENV PATH="/home/user/venv/bin:${PATH}"
 
-RUN pip install --no-cache-dir --upgrade pip setuptools
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install --upgrade pip setuptools
 
 # ------------------------------------------------------------------------------
 # Default working directory

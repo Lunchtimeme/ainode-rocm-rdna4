@@ -34,14 +34,13 @@ ARG REBUILD_HNSWLIB=false
 
 # Install Rust and build dependencies
 USER root
-RUN pacman -Syu --noconfirm \
+RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
     && pacman -S --noconfirm \
         protobuf \
         rust \
     # Create build directory with correct ownership
     && mkdir -p /home/user/build \
-    && chown -R user:users /home/user/build \
-    && rm -rf /var/cache/pacman/pkg/*
+    && chown -R user:users /home/user/build
 
 USER user
 WORKDIR /home/user/build
@@ -51,7 +50,7 @@ RUN git clone --depth 1 --branch ${CHROMADB_VERSION} \
     https://github.com/chroma-core/chroma.git .
 
 # Install build dependencies
-RUN pip install --no-cache-dir \
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install \
     cffi \
     fastapi \
     maturin \
@@ -60,20 +59,20 @@ RUN pip install --no-cache-dir \
     patchelf
 
 # Install ChromaDB Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install -r requirements.txt
 
 # Conditionally rebuild hnswlib (needed for some architectures)
-RUN if [ "${REBUILD_HNSWLIB}" = "true" ]; then \
-        pip install --no-cache-dir --no-binary :all: --force-reinstall chroma-hnswlib; \
+RUN --mount=type=cache,target=/home/user/.cache/pip if [ "${REBUILD_HNSWLIB}" = "true" ]; then \
+        pip install --no-binary :all: --force-reinstall chroma-hnswlib; \
     fi
 
 # Install gRPC dependencies
-RUN pip install --no-cache-dir grpcio grpcio-tools
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install grpcio grpcio-tools
 
 # Build protobuf files and install ChromaDB
-RUN make -C idl proto_python \
+RUN --mount=type=cache,target=/home/user/.cache/pip make -C idl proto_python \
     && pip uninstall chromadb -y || true \
-    && pip install --no-cache-dir --find-links target/wheels/ chromadb
+    && pip install --find-links target/wheels/ chromadb
 
 
 # ==============================================================================

@@ -56,7 +56,7 @@ ENV PATH="${PATH}:/opt/rocm/bin"
 # 3. Install ollama-rocm and minimal dependencies
 # 4. Clean package cache
 # ------------------------------------------------------------------------------
-RUN groupmod -g ${USER_GID} users \
+RUN --mount=type=cache,target=/var/cache/pacman/pkg groupmod -g ${USER_GID} users \
     && groupmod -g ${RENDER_GID} render \
     && groupmod -g ${VIDEO_GID} video \
     # Create user with GPU group access
@@ -67,7 +67,6 @@ RUN groupmod -g ${USER_GID} users \
         ollama-rocm \
         rocm-core \
     # Clean package cache (saves ~500MB)
-    && rm -rf /var/cache/pacman/pkg/* \
     && rm -rf /var/lib/pacman/sync/* \
     # Set ownership
     && chown -R user:users /home/user

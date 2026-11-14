@@ -52,7 +52,7 @@ ENV PATH="${PATH}:/opt/rocm/bin"
 # System packages and GPU group setup
 # ------------------------------------------------------------------------------
 USER root
-RUN pacman -Syu --noconfirm \
+RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
     && pacman -S --noconfirm \
         espeak-ng \
         ffmpeg \
@@ -67,7 +67,6 @@ RUN pacman -Syu --noconfirm \
     # Ensure app directory has correct ownership
     && chown -R user:users /home/user/app \
     # Clean package cache
-    && rm -rf /var/cache/pacman/pkg/* \
     && rm -rf /var/lib/pacman/sync/*
 
 # ------------------------------------------------------------------------------
@@ -96,16 +95,16 @@ RUN sed -i 's/spacy==3.8.5/spacy==3.8.7/g' pyproject.toml \
 # Using UV for faster dependency resolution and installation.
 # PyTorch is installed separately first for better layer caching.
 # ------------------------------------------------------------------------------
-RUN pip install --no-cache-dir \
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install \
     torch \
     torchvision \
     torchaudio \
     --index-url https://download.pytorch.org/whl/rocm6.4
 
 # Install UV and sync dependencies
-RUN pip install --no-cache-dir uv \
+RUN --mount=type=cache,target=/home/user/.cache/pip --mount=type=cache,target=/home/user/.cache/uv pip install uv \
     && uv venv --python 3.13 \
-    && uv sync --extra ${DEVICE} --no-cache
+    && uv sync --extra ${DEVICE}
 
 # ------------------------------------------------------------------------------
 # Model pre-download (optional)
@@ -113,8 +112,8 @@ RUN pip install --no-cache-dir uv \
 # Downloads the voice model during build to avoid first-run delays.
 # Set DOWNLOAD_MODEL=false to skip this step and download at runtime.
 # ------------------------------------------------------------------------------
-RUN if [ "${DOWNLOAD_MODEL}" = "true" ]; then \
-        pip install --no-cache-dir loguru \
+RUN --mount=type=cache,target=/home/user/.cache/pip if [ "${DOWNLOAD_MODEL}" = "true" ]; then \
+        pip install loguru \
         && python ./download_model.py --output api/src/models/v1_0; \
     fi
 

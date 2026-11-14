@@ -43,7 +43,7 @@ ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL="1"
 # proper /dev/kfd and /dev/dri access.
 # ------------------------------------------------------------------------------
 USER root
-RUN pacman -Syu --noconfirm \
+RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
     && pacman -S --noconfirm \
         ffmpeg \
         git-lfs \
@@ -55,7 +55,6 @@ RUN pacman -Syu --noconfirm \
     # Ensure app directory has correct ownership
     && chown -R user:users /home/user/app \
     # Clean package cache
-    && rm -rf /var/cache/pacman/pkg/* \
     && rm -rf /var/lib/pacman/sync/*
 
 # ------------------------------------------------------------------------------
@@ -86,7 +85,7 @@ RUN git clone --depth 1 --branch ${COMFYUI_REF} https://github.com/comfyanonymou
 # Nightly instead of stable 7.14.1: the bundled ROCR 1.21 in 7.14.x wheels keeps one CPU core at 100% (ROCm/TheRock#7051), reportedly fixed in newer nightlies
 # Stable fallback: "torch[device-gfx1201]==2.12.0+rocm7.14.1" "torchvision[device-gfx1201]==0.27.0+rocm7.14.1" "torchaudio==2.11.0+rocm7.14.1" from https://repo.amd.com/rocm/whl-multi-arch/
 # device-gfx1201 = RX 9070 XT; PyPI stays as extra index for the regular dependencies
-RUN pip install --no-cache-dir --pre \
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install --pre \
     "torch[device-gfx1201]==2.15.0a0+rocm10.2.0a20260918" \
     "torchvision[device-gfx1201]==0.30.0a0+rocm10.2.0a20260918" \
     "torchaudio==2.11.0.3+rocm10.2.0a20260918" \
@@ -98,7 +97,7 @@ RUN pip freeze | grep -i -E '^(torch|torchvision|torchaudio|triton)==' > /home/u
 ENV PIP_CONSTRAINT="/home/user/torch-constraints.txt"
 
 # ComfyUI core requirements
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install -r requirements.txt
 
 # Dependencies for popular custom nodes (consolidated into single layer)
 # - comfyui-manager: Node Manager
@@ -109,7 +108,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # - accelerate, diffusers: HuggingFace integrations
 # - segment_anything, sam2: Segmentation models
 # - ultralytics: YOLO models
-RUN pip install --no-cache-dir \
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install \
     # Node Manager
     comfyui-manager \
     matrix-nio \
@@ -147,13 +146,13 @@ RUN pip install --no-cache-dir \
     segment_anything
 
 # facexlib requires PEP 517 build
-RUN pip install --no-cache-dir --use-pep517 facexlib
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install --use-pep517 facexlib
 
 # SAM2 from GitHub (not on PyPI)
-RUN pip install --no-cache-dir git+https://github.com/facebookresearch/sam2
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install git+https://github.com/facebookresearch/sam2
 
 # bitsandbytes with ROCm support
-RUN pip install --no-cache-dir bitsandbytes
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install bitsandbytes
 
 # ------------------------------------------------------------------------------
 # Container startup

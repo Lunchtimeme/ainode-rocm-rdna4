@@ -38,4 +38,4 @@ WORKDIR /home/user/app
 RUN git fetch --depth 1 origin refs/tags/${COMFYUI_REF}:refs/tags/${COMFYUI_REF} \
  && git checkout -f ${COMFYUI_REF}
 
-RUN /home/user/venv/bin/pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/home/user/.cache/pip /home/user/venv/bin/pip install -r requirements.txt

@@ -32,10 +32,9 @@ FROM archlinux
 # 2. Create base nginx configuration
 # 3. Clean package cache
 # ------------------------------------------------------------------------------
-RUN pacman -Syu --noconfirm \
+RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
     && pacman -S --noconfirm nginx \
     # Clean package cache (saves ~200MB)
-    && rm -rf /var/cache/pacman/pkg/* \
     && rm -rf /var/lib/pacman/sync/* \
     # Create minimal nginx.conf
     # - worker_processes: 1 is sufficient for reverse proxy

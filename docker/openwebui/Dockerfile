@@ -29,9 +29,8 @@
 FROM archlinux AS frontend-builder
 
 # Install Node.js for frontend build
-RUN pacman -Syu --noconfirm \
-    && pacman -S --noconfirm git npm \
-    && rm -rf /var/cache/pacman/pkg/*
+RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
+    && pacman -S --noconfirm git npm
 
 WORKDIR /build
 ENV NODE_OPTIONS="--max-old-space-size=8192"
@@ -62,7 +61,9 @@ ARG USER_GID=100
 # Open WebUI environment configuration
 # ------------------------------------------------------------------------------
 ENV ENV="prod"
-ENV WEBUI_SECRET_KEY=""
+# WEBUI_SECRET_KEY is supplied at runtime by compose.yml from .env. It used to be
+# declared empty here, which both hid the knob and tripped the
+# SecretsUsedInArgOrEnv lint; image ENV would lose to runtime env anyway.
 
 # Model storage paths
 ENV HF_HOME="/home/user/app/backend/data/embedding/models"
@@ -105,7 +106,7 @@ ENV WEBUI_AUTH="true"
 # System packages
 # ------------------------------------------------------------------------------
 USER root
-RUN pacman -Syu --noconfirm \
+RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
     && pacman -S --noconfirm \
         apache \
         ffmpeg \
@@ -113,7 +114,6 @@ RUN pacman -Syu --noconfirm \
     # Ensure app directory has correct ownership
     && chown -R user:users /home/user/app \
     # Clean package cache
-    && rm -rf /var/cache/pacman/pkg/* \
     && rm -rf /var/lib/pacman/sync/*
 
 # ------------------------------------------------------------------------------
@@ -135,7 +135,7 @@ RUN mkdir -p .cache/chroma \
 # Python dependencies
 # ------------------------------------------------------------------------------
 # PyTorch CPU-only (Open WebUI doesn't need GPU for inference)
-RUN pip install --no-cache-dir \
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install \
     torch \
     torchvision \
     torchaudio \
@@ -145,11 +145,11 @@ RUN pip install --no-cache-dir \
 RUN sed -i 's/rapidocr-onnxruntime==1.4.4/rapidocr-onnxruntime/g' backend/requirements.txt
 
 # Install backend dependencies
-RUN pip install --no-cache-dir -r backend/requirements.txt
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install -r backend/requirements.txt
 
 # Fix for Python 3.13: audioop module deprecated
 # See: https://github.com/jiaaro/pydub/issues/725#issuecomment-2439291764
-RUN pip install --no-cache-dir audioop-lts hf_xet
+RUN --mount=type=cache,target=/home/user/.cache/pip pip install audioop-lts hf_xet
 
 # ------------------------------------------------------------------------------
 # Pre-download models (reduces first-run time)

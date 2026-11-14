@@ -7,22 +7,39 @@ Credentials belong in `.env` (gitignored) or `data/` (gitignored).
 ## Layout and conventions
 
 - `compose.yml` — compose project `ainode`, one bridge network `ainode-internal`,
-  containers named `ainode-<service>`.
+  containers named `ainode-<service>`. Every host-specific value is
+  `${AINODE_*:-default}` and comes from `.env`; a missing `.env` still works.
 - `docker/<service>/Dockerfile` — build-time settings only (base image pin,
   packages, persistent defaults). Changing these requires a rebuild.
 - `compose.yml` — semi-permanent service settings (environment, volumes, limits,
-  ports, build args).
+  ports, build args). Runtime settings that used to live as `ENV` in a Dockerfile
+  (Open WebUI's `ENABLE_SIGNUP`, `WEBUI_SECRET_KEY`, ...) now live here, because
+  runtime env overrides image `ENV` and flipping one costs a restart, not a rebuild.
+- `scripts/render-config.sh` — generates `data/reverseproxy/sites-enabled/*` from
+  `examples/reverseproxy/*`; `--check` diffs, `--reload` applies.
+- `scripts/set-comfyui-password.sh` — writes the ComfyUI basic-auth file.
 - `data/<service>/` — runtime state and configuration (gitignored). Sanitized
   copies live in `examples/<service>/` so the repo shows the expected shape
-  without local secrets.
-- `.env` — local secrets (gitignored). Never read values into commits, logs, or
+  without local secrets. **`data/reverseproxy/sites-enabled/` is generated**:
+  edit `examples/reverseproxy/` and re-run `scripts/render-config.sh`.
+- `.env` — local secrets and host settings (gitignored, chmod 600). Template and
+  full variable list: `.env.example`. Never read values into commits, logs, or
   documentation.
+- Secrets that contain `$` (apr1 hashes) cannot go in `.env`; compose would strip
+  them as interpolation. They stay files: `data/reverseproxy/htpasswd/.htpasswd`,
+  `ssl/`.
 
 House rules:
 
 - **Additive changes only.** Do not change an existing service's image, volumes,
   network, or published ports. Never restart or rebuild the ROCm services
   (`comfyui`, `ollama`, `kokoro-fastapi`, `openwebui`) without an explicit request.
+- **Optional services are compose profiles** (`comfyui`, `kokoro`, `searxng`,
+  `crawl4ai`, `strata`); `COMPOSE_PROFILES` in `.env` is the switch. Anything
+  gated that way must also keep `reverseproxy`'s `depends_on` entry
+  `required: false` and must not leave a vhost pointing at it — an nginx
+  `proxy_pass` to a missing container stops nginx from spawning any worker and
+  silently kills every other vhost.
 - **Target one service.** Never run bare `docker compose up -d`; it can recreate
   unrelated services. Use `docker compose up -d --no-deps <service>`.
 - **Logging is off by design.** The `x-common` anchor sets
@@ -50,9 +67,14 @@ House rules:
 | Bonsai 2 / Prism | `ainode-ollama` | `ainode-ollama:8080` | `http://bonsai.localdomain` |
 | ComfyUI | `ainode-comfyui` | `ainode-comfyui:8188` | `http://comfyui.localdomain` |
 | Open WebUI | `ainode-openwebui` | `ainode-openwebui:8080` | `http://openwebui.localdomain` |
+| Strata (opt.) | `ainode-strata` | `ainode-strata:8080` | `http://strata.localdomain` |
 
 `chroma` and `kokoro-fastapi` are internal-only; reach them by container name on
 `ainode-internal`.
+
+A hostname whose service is disabled in `COMPOSE_PROFILES` has no vhost at all and
+falls through to the catch-all `00default`, which answers `404` on purpose. A
+`502` means the vhost exists but the container behind it is down.
 
 From another container on `ainode-internal`, use the internal address; from the
 host or another LAN device, use the `*.localdomain` name. Internal calls skip the
@@ -125,7 +147,8 @@ after accepting the certificate.
   name is the model id. Apply with `docker compose restart ollama`.
 - Open WebUI: Admin Panel -> Settings -> Connections -> add **OpenAI** with base
   URL `http://ainode-ollama:8080/v1` and a placeholder API key.
-- Disable: set `PRISM_ENABLE=0` for the `ollama` service or remove the binaries.
+- Disable: `PRISM_ENABLE=0` in `.env` (it is passed to the `ollama` service), or
+  remove the binaries.
 - VRAM: the router loads on the first request and unloads after 120 s idle. For
   explicit unloads around image generation, import
   `examples/openwebui/tools/native_image_gen_v2.py` via Workspace -> Tools; it
@@ -147,6 +170,8 @@ after accepting the certificate.
 ## Verification
 
 ```
+docker compose -f ~/ainode/compose.yml config --services   # what COMPOSE_PROFILES selects
+scripts/render-config.sh --check                          # live vhosts vs templates
 docker compose -f ~/ainode/compose.yml ps
 curl -s 'http://searxng.localdomain/search?q=test&format=json' | head -c 200
 curl -s http://crawl4ai.localdomain/health
@@ -155,6 +180,8 @@ curl -s http://bonsai.localdomain/v1/models  | head -c 200
 curl -s -o /dev/null -w '%{http_code}\n' http://comfyui.localdomain/
 ```
 
-Expected: SearXNG and Ollama return JSON; Crawl4AI returns
+Expected: `config --services` lists the core four plus whatever the profiles add;
+`render-config.sh --check` prints "vhosts are up to date"; SearXNG and Ollama
+return JSON; Crawl4AI returns
 `{"status":"ok",...}`; Bonsai returns a model list; ComfyUI returns `401` without
 basic auth (that is the auth gate working).

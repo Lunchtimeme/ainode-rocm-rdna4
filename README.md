@@ -27,6 +27,7 @@ This repository contains Docker configuration files for setting up the following
 *   **Kokoro FastAPI:** A backend for Text-to-Speech (TTS), providing high-quality voice generation.
 *   **SearXNG:** A metasearch engine that aggregates results from multiple search engines, used as a web search backend for Open WebUI.
 *   **Crawl4AI:** A self-hosted web extraction API for agents, exposed at `crawl4ai.localdomain`.
+*   **Strata (optional):** An alternative local model server with OpenAI- and Anthropic-compatible endpoints. Off by default; enable with the `strata` profile.
 *   **Nginx:** A reverse proxy server, managing incoming requests and routing them to the appropriate backend services.
 
 ## Repository Structure
@@ -35,9 +36,11 @@ The repository is organized as follows:
 
 *   `docker` - Contains Dockerfiles for all stack components.
 *   `docker/llamacpp` - Startup script and router preset for the optional Bonsai 2 server (`start.sh`, `models.ini`). The PrismML binaries are downloaded by the user and ignored by git.
-*   `examples` - Contains configuration examples.
+*   `scripts` - Host-side helpers: `render-config.sh` generates the nginx vhosts, `set-comfyui-password.sh` writes the basic-auth file.
+*   `examples` - Versioned templates. `examples/reverseproxy/*` are the *source* of the generated vhosts.
 *   `AGENTS.md` - Service access details and conventions for agents.
-*   `compose.yml` - Docker Compose configuration file.
+*   `compose.yml` - Docker Compose configuration; every host-specific value comes from `.env`.
+*   `.env.example` - Documented list of every variable, with the defaults.
 
 ## Prerequisites
 
@@ -57,26 +60,39 @@ Follow these steps to get your AINode stack up and running:
 
 2.  **Create the data directory structure:**
     ```bash
-    mkdir -p data/{chroma,comfyui/user,comfyui/custom_nodes,common/models,desktop/home,desktop/home_i3,ollama,openwebui/data,reverseproxy/htpasswd,reverseproxy/sites_enabled,searxng} ssl
+    mkdir -p data/{chroma,comfyui/user,comfyui/custom_nodes,common/models,desktop/home,desktop/home_i3,ollama,openwebui/data,reverseproxy/htpasswd,reverseproxy/sites-enabled,searxng} ssl
     ```
+    The nginx vhost directory is `sites-enabled` (hyphen): `compose.yml` mounts exactly that path, and anything else leaves nginx with no server blocks at all.
 
 3.  **Place SSL certificates:**
     Copy the `ainode.crt` and `ainode.key` files into the `ssl` directory. These files are used for secure communication via HTTPS. You can generate your own self-signed certificates or use a certificate from a trusted Certificate Authority (CA), example on how to do that can be found in the `examples/ssl` directory. The entire ssl directory is gitignored so your certificates never leave your machine.
 
 4.  **Create Basic Auth credentials for ComfyUI:**
     ```bash
-    cd data/reverseproxy/htpasswd
-    printf "USERNAME:$(openssl passwd -apr1)\n" >> .htpasswd
-    cd ../../../
+    scripts/set-comfyui-password.sh --user comfyui
     ```
-    Replace `USERNAME` with your desired username. You'll be prompted to enter the password.
+    It prompts for a password and writes `data/reverseproxy/htpasswd/.htpasswd`. The hash must not live in `.env`: `$apr1$...` contains `$`, which compose reads as variable interpolation and silently strips.
 
-5.  **Review and configure Docker Compose files:**
-    The `compose.yml` file defines the services (containers) that make up the stack and how they interact. The `Dockerfile` files in `docker/*` directories contain instructions for building the Docker images for each service. Examine the `compose.yml` and `Dockerfile` files to understand the stack's configuration, mainly the reverse proxy configuration in the `data/reverseproxy/sites-enabled` directory. Some examples can be found in the `examples/reverseproxy` directory. You should also set UIDs and GIDs in the `compose.yml` according to your environment. Also, make sure that `ENABLE_SIGNUP` in the `docker/openwebui/Dockerfile` is initially set to `true` so you can create the admin account. You can change it to `false` afterwards.
+5.  **Configure the installation:**
+    ```bash
+    cp .env.example .env
+    chmod 600 .env
+    $EDITOR .env
+    ```
+    Everything host-specific lives there; `.env.example` documents each variable and compose carries a working default for all of them. The two values people normally set:
 
-    If you want to use the SearXNG metasearch service, copy `examples/searxng/settings.yml` to `data/searxng/settings.yml` and replace `REPLACE_WITH_YOUR_OWN_RANDOM_SECRET` with a strong secret before starting the stack. The template runs Google CSE, Bing, Brave, DuckDuckGo-web, Yandex and PrivacyWall as independent general indexes, and disables the engines most often blocked for self-hosted IPs; adjust the `engines` block if your host behaves differently.
+    * `COMPOSE_PROFILES` - which services this machine runs. Always on: `ollama`, `openwebui`, `chroma`, `reverseproxy`. Optional: `comfyui`, `kokoro`, `searxng`, `crawl4ai`, `strata`. A service whose profile is not listed is neither built nor started, so this is also how you keep a small disk footprint.
+    * The secrets: `CRAWL4AI_API_TOKEN`, `SEARXNG_SECRET` (`openssl rand -hex 24`). `WEBUI_SECRET_KEY` may stay empty, in which case Open WebUI generates and stores its own.
 
-    Bonsai 2 is optional: extract the PrismML build into `docker/llamacpp/`, put the GGUF weights in `data/common/models/bonsai/`, and register them in `docker/llamacpp/models.ini`; see [AGENTS.md](AGENTS.md).
+    SearXNG needs no file editing for its secret: `SEARXNG_SECRET` overrides `data/searxng/settings.yml`. The engine list lives in `examples/searxng/settings.yml`; copy it to `data/searxng/settings.yml` if you want to change which engines are used.
+
+    Bonsai 2 is optional: extract the PrismML build into `docker/llamacpp/`, put the GGUF weights in `data/common/models/bonsai/`, and register them in `docker/llamacpp/models.ini`; see [AGENTS.md](AGENTS.md). Set `PRISM_ENABLE=0` in `.env` to skip the second server entirely.
+
+    Then generate the nginx vhosts from their templates:
+    ```bash
+    scripts/render-config.sh
+    ```
+    This writes `data/reverseproxy/sites-enabled/*` from `examples/reverseproxy/*`, skipping any vhost whose profile is off and filling in the LAN domain and the two bearer tokens. Never edit the generated files; edit the templates and re-run it. `scripts/render-config.sh --check` tells you whether the live config matches the templates.
 
 6.  **Build and run the stack:**
     Navigate to the repository directory and start the Docker containers:
@@ -84,35 +100,38 @@ Follow these steps to get your AINode stack up and running:
     # 1. Build the base image first (required)
     docker build -t ainode-base:python313 ./docker/base
 
-    # 2. Build all services
+    # 2. Build the services enabled in COMPOSE_PROFILES
     docker compose build
 
-    # 3. Start the stack
+    # 3. Start them (individual services: up -d --no-deps <service>)
     docker compose up -d
     ```
     The `-d` flag runs the containers in detached mode (in the background). It is highly suggested to run the stack without `-d` at first to monitor the startup process.
 
 7.  **Access the interfaces:**
-    *   The standard Open WebUI interface will be accessible via port `443` (HTTPS).
-    *   The Amnesic Open WebUI interface will be accessible via port `8443` (HTTPS).
-    *   The Ollama API will be accessible on the standard port `11434`.
-    *   The SearXNG metasearch engine is reachable internally at `http://ainode-searxng:8080`.
+    *   Open WebUI is served through the reverse proxy on ports `80`/`443`.
+    *   The Ollama API is published on `11434`.
+    *   SearXNG listens on `8080` on the host and is proxied as `http://searxng.localdomain`.
     *   The optional Bonsai 2 endpoint is at `http://ainode-ollama:8080/v1` (LAN: `http://bonsai.localdomain`).
     *   Crawl4AI is at `http://crawl4ai.localdomain` (LAN; no credentials).
     
     You can access these interfaces using your web browser or with tools like `curl` or `Postman`.
 
-    To access ComfyUI and Kokoro FastAPI WebUI, you must properly set your DNS configuration or `/etc/hosts` file to reflect the configuration in the `data/reverseproxy/sites-enabled` directory. If you're running AINode on localhost, you can add the following to your `/etc/hosts` file:
+    The definitive hostname list is `examples/reverseproxy/`. If you run AINode on localhost and have no LAN DNS, add this to `/etc/hosts`:
     ```configuration
-    127.0.0.1   comfyui.localdomain             comfyui
-    127.0.0.1   ollama.localdomain              ollama
-    127.0.0.1   openwebui.localdomain           openwebui
-    127.0.0.1   openwebui-amnesic.localdomain   openwebui-amnesic
-    127.0.0.1   kokoro-fastapi.localdomain      kokoro-fastapi
+    127.0.0.1   comfyui.localdomain        comfyui
+    127.0.0.1   ollama.localdomain         ollama
+    127.0.0.1   openwebui.localdomain      openwebui
+    127.0.0.1   bonsai.localdomain         bonsai
+    127.0.0.1   searxng.localdomain        searxng
+    127.0.0.1   crawl4ai.localdomain       crawl4ai
+    127.0.0.1   kokoro-fastapi.localdomain kokoro-fastapi
+    127.0.0.1   strata.localdomain         strata
     ```
     With this setup, you can access the components by using the specified hostname in your URL, e.g., `https://comfyui`, `https://openwebui`, etc.
 
 8.  **Configure service URLs in Open WebUI:**
+    Note that `ENABLE_SIGNUP` is now a `.env` variable (`ENABLE_SIGNUP=true`, then set it to `false` after creating the admin account). Changing it is a restart, not a rebuild.
     Once the stack is up and running, log into Open WebUI and add the internal service endpoints through the web GUI:
     *   **SearXNG (web search):** `http://ainode-searxng:8080`
     *   **ComfyUI (image generation):** `http://ainode-comfyui:8188`

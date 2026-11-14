@@ -10,7 +10,14 @@
 #   - ChromaDB:     Vector database for RAG
 #   - Kokoro:       Text-to-Speech API
 #   - Crawl4AI:     Self-hosted web extraction API (Hermes + LAN clients)
+#   - Strata:       Optional local model server (OpenAI + Anthropic API), off by
+#                   default; enable with the `strata` profile
 #   - nginx:        Reverse Proxy with SSL termination
+#
+# Configuration:
+#   Every host-specific value is read from .env (see .env.example). Optional
+#   services are gated by compose profiles; COMPOSE_PROFILES in .env is the
+#   single switch for what this installation runs.
 #
 # Prerequisites:
 #   Before running docker-compose, build the base image:
@@ -22,7 +29,7 @@
 #   $ docker-compose logs -f  # Follow logs
 # ==============================================================================
 
-name: ainode
+name: ${AINODE_PROJECT:-ainode}
 
 # ==============================================================================
 # Common configuration templates
@@ -43,14 +50,14 @@ x-common-render: &common-render
 
 # Common build args for user/group ID matching
 x-build-args-user: &build-args-user
-  USER_UID: 1000
-  USER_GID: 100
+  USER_UID: ${AINODE_USER_UID:-1000}
+  USER_GID: ${AINODE_USER_GID:-100}
 
 # Common build args for GPU group access (Gentoo defaults)
 x-build-args-gpu: &build-args-gpu
   <<: *build-args-user
-  RENDER_GID: 28    # Host's render group GID
-  VIDEO_GID: 27     # Host's video group GID
+  RENDER_GID: ${AINODE_RENDER_GID:-28}    # Host's render group GID
+  VIDEO_GID: ${AINODE_VIDEO_GID:-27}     # Host's video group GID
 
 # ==============================================================================
 # Services
@@ -71,10 +78,10 @@ services:
       dockerfile: ./docker/chroma/Dockerfile
       args:
         <<: *build-args-user
-        CHROMADB_VERSION: "0.6.3"
-        REBUILD_HNSWLIB: "false"
-    container_name: ainode-chroma
-    hostname: ainode-chroma
+        CHROMADB_VERSION: "${AINODE_CHROMADB_VERSION:-0.6.3}"
+        REBUILD_HNSWLIB: "${AINODE_REBUILD_HNSWLIB:-false}"
+    container_name: ${AINODE_PREFIX:-ainode}-chroma
+    hostname: ${AINODE_PREFIX:-ainode}-chroma
     networks:
       - ainode-internal
     volumes:
@@ -98,18 +105,19 @@ services:
   # ============================================================================
   comfyui:
     <<: *common-render
+    profiles: ["comfyui"]
     # Built by docker/comfyui/Dockerfile; the ComfyUI version is fixed by
     # COMFYUI_REF there, not by the tag. For a version bump on an existing
     # image, build docker/comfyui/Dockerfile.update to this same tag (see
     # README).
-    image: ainode-comfyui:latest
+    image: ${AINODE_PREFIX:-ainode}-comfyui:${AINODE_COMFYUI_TAG:-latest}
     build:
       context: .
       dockerfile: ./docker/comfyui/Dockerfile
       args:
         <<: *build-args-gpu
-    container_name: ainode-comfyui
-    hostname: ainode-comfyui
+    container_name: ${AINODE_PREFIX:-ainode}-comfyui
+    hostname: ${AINODE_PREFIX:-ainode}-comfyui
     environment:
      - MIOPEN_FIND_MODE=2
      - PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.8,max_split_size_mb:512
@@ -150,13 +158,14 @@ services:
   # ============================================================================
   kokoro-fastapi:
     <<: *common-render
+    profiles: ["kokoro"]
     build:
       context: .
       dockerfile: ./docker/kokoro-fastapi/Dockerfile
       args:
         <<: *build-args-gpu
-    container_name: ainode-kokoro-fastapi
-    hostname: ainode-kokoro-fastapi
+    container_name: ${AINODE_PREFIX:-ainode}-kokoro-fastapi
+    hostname: ${AINODE_PREFIX:-ainode}-kokoro-fastapi
     networks:
       - ainode-internal
     # tmpfs with exec permission (required for some operations)
@@ -185,8 +194,8 @@ services:
       dockerfile: ./docker/ollama/Dockerfile
       args:
         <<: *build-args-gpu
-    container_name: ainode-ollama
-    hostname: ainode-ollama
+    container_name: ${AINODE_PREFIX:-ainode}-ollama
+    hostname: ${AINODE_PREFIX:-ainode}-ollama
     networks:
       - ainode-internal
     # Optional Bonsai 2 server: the PrismML llama.cpp fork runs a second,
@@ -195,6 +204,11 @@ services:
     # model files are missing, so leaving this entrypoint in place is safe.
     # See "Bonsai 2 via PrismML llama-server" in the README.
     entrypoint: ["/bin/sh", "/opt/prism/start.sh"]
+    environment:
+      # Bonsai 2 (PrismML llama-server on port 8080). start.sh falls back to a
+      # plain `ollama serve` when the binaries or model files are missing, so
+      # 1 is safe everywhere. 0 = never start the second server.
+      - PRISM_ENABLE=${PRISM_ENABLE:-1}
     # tmpfs with exec permission (required by Ollama)
     tmpfs:
       - /home/user/tmp:exec,mode=01777
@@ -227,8 +241,17 @@ services:
       dockerfile: ./docker/openwebui/Dockerfile
       args:
         <<: *build-args-user
-    container_name: ainode-openwebui
-    hostname: ainode-openwebui
+    container_name: ${AINODE_PREFIX:-ainode}-openwebui
+    hostname: ${AINODE_PREFIX:-ainode}-openwebui
+    # These used to exist only as ENV in docker/openwebui/Dockerfile, which
+    # meant a 11 GB rebuild to flip a boolean. Runtime env wins over image ENV.
+    environment:
+      # Empty = Open WebUI keeps generating and storing its own key. Set it to
+      # survive container replacement (note: changing it invalidates sessions).
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-}
+      # Set false after creating the admin account.
+      - ENABLE_SIGNUP=${ENABLE_SIGNUP:-true}
+      - DEFAULT_USER_ROLE=${DEFAULT_USER_ROLE:-admin}
     depends_on:
       - chroma
     networks:
@@ -258,17 +281,21 @@ services:
   # ============================================================================
   searxng:
     <<: *common
-    image: searxng/searxng:latest
-    container_name: ainode-searxng
-    hostname: ainode-searxng
+    profiles: ["searxng"]
+    image: searxng/searxng:${AINODE_SEARXNG_TAG:-latest}
+    container_name: ${AINODE_PREFIX:-ainode}-searxng
+    hostname: ${AINODE_PREFIX:-ainode}-searxng
     networks:
       - ainode-internal
     ports:
-      - "8080:8080" # Allows you to access the search engine directly in your browser
+      - "${AINODE_SEARXNG_PORT:-8080}:8080" # Allows you to access the search engine directly in your browser
     volumes:
       - ./data/searxng:/etc/searxng
     environment:
-      - SEARXNG_BASE_URL=http://searxng.localdomain/
+      - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:-http://searxng.${AINODE_LAN_DOMAIN:-localdomain}/}
+      # Overrides server.secret_key in data/searxng/settings.yml (SearXNG reads
+      # SEARXNG_SECRET natively), so the secret lives in .env, not a config file.
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-}
 
   # ============================================================================
   # Crawl4AI - Web Extraction API
@@ -279,21 +306,22 @@ services:
   # ============================================================================
   crawl4ai:
     <<: *common
-    image: ainode-crawl4ai:latest
+    profiles: ["crawl4ai"]
+    image: ${AINODE_PREFIX:-ainode}-crawl4ai:${AINODE_CRAWL4AI_TAG:-latest}
     build:
       # Tiny context: the Dockerfile only pins the upstream image, so there is
       # no reason to ship the stack directory to the builder.
       context: ./docker/crawl4ai
       dockerfile: Dockerfile
-    container_name: ainode-crawl4ai
-    hostname: ainode-crawl4ai
+    container_name: ${AINODE_PREFIX:-ainode}-crawl4ai
+    hostname: ${AINODE_PREFIX:-ainode}-crawl4ai
     networks:
       - ainode-internal
     # Chromium's default 64 MB /dev/shm breaks under load.
-    shm_size: "1g"
+    shm_size: "${AINODE_CRAWL4AI_SHM:-1g}"
     # The browser pool is the memory hog; cap it so a runaway crawl cannot
     # take the host down with it.
-    mem_limit: 4g
+    mem_limit: ${AINODE_CRAWL4AI_MEM_LIMIT:-4g}
     environment:
       # Without a token the entrypoint binds container loopback only and the
       # reverse proxy gets connection refused. Value lives in ~/ainode/.env.
@@ -301,6 +329,48 @@ services:
     volumes:
       # Runtime config (gitignored); versioned mirror in examples/crawl4ai/.
       - ./data/crawl4ai/config.yml:/app/config.yml:ro
+
+  # ============================================================================
+  # Strata - optional local model server (OpenAI and Anthropic compatible)
+  # ============================================================================
+  # Off by default. It is a *replacement* for the Ollama+Bonsai role rather than
+  # a companion: it plans from the whole machine's RAM and takes the whole GPU.
+  # Enable with strata in COMPOSE_PROFILES and STRATA_API_KEY set in .env.
+  #
+  # No published host port on purpose: 8080 is already taken by SearXNG, and the
+  # reverse proxy injects the bearer key (same pattern as Crawl4AI).
+  # Image flavors are per GPU family; rocm-gfx120x covers gfx1200/gfx1201.
+  # ============================================================================
+  strata:
+    <<: *common-render
+    image: ghcr.io/niko1221/strata:${AINODE_STRATA_TAG:-0.2.13-rocm-gfx120x}
+    container_name: ${AINODE_PREFIX:-ainode}-strata
+    hostname: ${AINODE_PREFIX:-ainode}-strata
+    profiles: ["strata"]
+    # No mem_limit on purpose: the engine plans from total system RAM and warns
+    # when it sees a cap. Docker's default 10 s SIGTERM grace is too short for a
+    # loading/unloading model, hence the two-minute stop window.
+    shm_size: 2g
+    stop_grace_period: 2m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    environment:
+      # Empty lets Strata generate its own key, which would then not match the
+      # bearer the reverse proxy injects. Set STRATA_API_KEY before enabling.
+      - API_KEY=${STRATA_API_KEY:-}
+      - MODEL=${STRATA_MODEL:-IQ3_XXS}
+      - CONTEXT=${STRATA_CONTEXT:-32k}
+      - VISION=${STRATA_VISION:-off}
+      - TUNE=${STRATA_TUNE:-skip}
+      # Reuse GGUFs already on disk; otherwise the first start downloads tens of GB.
+      - MODEL_PATH=${STRATA_MODEL_PATH:-/models/strata}
+    networks:
+      - ainode-internal
+    volumes:
+      - ./data/strata:/data
+      - ./data/common/models:/models:ro
 
   # ============================================================================
   # Reverse Proxy (nginx)
@@ -313,19 +383,21 @@ services:
     build:
       context: .
       dockerfile: ./docker/reverseproxy/Dockerfile
-    container_name: ainode-reverseproxy
-    hostname: ainode-reverseproxy
+    container_name: ${AINODE_PREFIX:-ainode}-reverseproxy
+    hostname: ${AINODE_PREFIX:-ainode}-reverseproxy
     depends_on:
-      - ollama
-      - comfyui
-      - openwebui
+      ollama:    { condition: service_started }
+      openwebui: { condition: service_started }
+      # comfyui is optional from here on: with its profile disabled compose
+      # would abort with "depends on undefined service" if this were required.
+      comfyui:   { condition: service_started, required: false }
     networks:
       - ainode-internal
     ports:
-      - "80:80"       # HTTP
-      - "443:443"     # HTTPS
-      - "5000:5000"   # Additional service
-      - "11434:11434" # Ollama API
+      - "${AINODE_HTTP_PORT:-80}:80"       # HTTP
+      - "${AINODE_HTTPS_PORT:-443}:443"     # HTTPS
+      - "${AINODE_ALT_PORT:-5000}:5000"   # Additional service
+      - "${AINODE_OLLAMA_PORT:-11434}:11434" # Ollama API
     volumes:
       # nginx configuration (virtual hosts)
       - ./data/reverseproxy/sites-enabled:/etc/nginx/sites-enabled
@@ -345,4 +417,4 @@ services:
 networks:
   ainode-internal:
     driver: bridge
-    name: ainode-internal
+    name: ${AINODE_NETWORK:-ainode-internal}

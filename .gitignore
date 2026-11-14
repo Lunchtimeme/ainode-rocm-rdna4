@@ -7,6 +7,8 @@
 # Local environment files and secrets (edit manually per README before first build)
 /.env
 /.env.*
+# ...but the documented template must ship
+!/.env.example
 
 # Local scratch file
 /unused commands

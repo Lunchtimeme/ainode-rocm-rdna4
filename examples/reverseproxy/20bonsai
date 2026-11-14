@@ -1,0 +1,32 @@
+# render-if: var PRISM_ENABLE 1
+server {
+	listen 80;
+	listen 443 ssl;
+
+	ssl_certificate certs/ainode.crt;
+	ssl_certificate_key certs/ainode.key;
+
+	server_name bonsai bonsai.${AINODE_LAN_DOMAIN};
+
+	client_max_body_size 1G;
+
+	proxy_buffering off;
+
+	# Bonsai 2 (PrismML llama-server, OpenAI-compatible API)
+	location / {
+		resolver 127.0.0.11 valid=30s;
+		proxy_bind $server_addr;
+		set $ainode_upstream "http://${AINODE_PREFIX}-ollama:8080";
+		proxy_pass $ainode_upstream;
+
+		# Streaming responses and long generations
+		proxy_http_version 1.1;
+		proxy_set_header Host $host;
+		proxy_set_header X-Real-IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+		proxy_set_header Connection "";
+		proxy_read_timeout 86400;
+		proxy_send_timeout 86400;
+	}
+}

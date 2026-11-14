@@ -1,3 +1,4 @@
+# render-if: profile crawl4ai
 server {
     listen 80;
     listen 443 ssl;
@@ -5,7 +6,7 @@ server {
     ssl_certificate certs/ainode.crt;
     ssl_certificate_key certs/ainode.key;
 
-    server_name crawl4ai crawl4ai.localdomain;
+    server_name crawl4ai crawl4ai.${AINODE_LAN_DOMAIN};
 
     client_max_body_size 16M;
     proxy_buffering off;
@@ -14,7 +15,8 @@ server {
     location / {
         resolver 127.0.0.11 valid=30s;
         proxy_bind $server_addr;
-        proxy_pass http://ainode-crawl4ai:11235;
+        set $ainode_upstream "http://${AINODE_PREFIX}-crawl4ai:11235";
+        proxy_pass $ainode_upstream;
 
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -23,7 +25,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         # LAN access model matches SearXNG: the proxy supplies the API token,
         # so devices only need the URL. Do not publish 11235 on the host.
-        proxy_set_header Authorization "Bearer REPLACE_WITH_CRAWL4AI_API_TOKEN";
+        proxy_set_header Authorization "Bearer ${CRAWL4AI_API_TOKEN}";
         proxy_set_header Connection "";
         proxy_read_timeout 300;
         proxy_send_timeout 300;

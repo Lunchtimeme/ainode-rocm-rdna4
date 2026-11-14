@@ -1,0 +1,7 @@
+# Shared websocket upgrade map.
+# Defined once here: four separate vhosts used to redefine it, which nginx
+# tolerates today but is one typo away from "duplicate map name".
+map $http_upgrade $connection_upgrade {
+	default upgrade;
+	''      close;
+}

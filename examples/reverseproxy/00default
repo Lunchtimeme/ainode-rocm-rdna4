@@ -1,0 +1,17 @@
+# render-if: none
+# Catch-all for hostnames that have no vhost.
+# Without this, a port-80 request for a hostname whose service was turned off
+# (profile disabled) silently lands on whichever server block nginx loaded
+# first - i.e. Open WebUI. An explicit 404 is honest: that service is not
+# installed on this machine.
+server {
+	listen 80 default_server;
+	listen 443 ssl default_server;
+
+	ssl_certificate certs/ainode.crt;
+	ssl_certificate_key certs/ainode.key;
+
+	server_name _;
+
+	return 404;
+}

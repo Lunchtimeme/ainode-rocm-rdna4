@@ -8,13 +8,18 @@
 # a container refuses to start: a renamed variable, a lost default, a service
 # that quietly moved behind a profile, a port that changed.
 #
-# The golden file is generated with tests/compose.test.env, not your .env, and
-# with the repository path normalised to <repo>, so the test is reproducible on
-# any machine and in CI.
+# The comparison is done on a canonicalised form (scripts/canonicalize-compose.py):
+# sorted keys, version-specific cosmetic fields removed, paths normalised to
+# <repo>, secrets redacted. Without that, the test fails whenever the compose
+# version differs between machines - which is exactly what happened when it was
+# first run in GitHub Actions.
+#
+# The golden file is generated with tests/compose.test.env, not your .env, so the
+# result does not depend on this machine's configuration.
 #
 # Usage:
 #   scripts/check-compose.sh            compare, exit 1 on drift
-#   scripts/check-compose.sh --update   rewrite tests/compose.golden.yml
+#   scripts/check-compose.sh --update   rewrite tests/compose.golden.json
 #
 # Run it after editing compose.yml, and in CI.
 # ==============================================================================
@@ -24,17 +29,18 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname -- "$SCRIPT_DIR")
 . "$SCRIPT_DIR/lib-env.sh"
 TEST_ENV="$ROOT/tests/compose.test.env"
-GOLDEN="$ROOT/tests/compose.golden.yml"
+GOLDEN="$ROOT/tests/compose.golden.json"
 
 UPDATE=0
 case ${1:-} in
     --update) UPDATE=1 ;;
-    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     "") ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
 esac
 
 ainode_require_cmd docker "compose config is the renderer under test" "pacman -S docker docker-compose" || exit 1
+ainode_require_cmd python3 "the rendered config is canonicalised before the diff" "pacman -S python" || exit 1
 
 # Render with a clean environment. `env -i` matters: any AINODE_* or COMPOSE_*
 # exported in the user's shell outranks --env-file, so a leftover variable would
@@ -43,12 +49,8 @@ ainode_require_cmd docker "compose config is the renderer under test" "pacman -S
 render() {
     env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
         docker compose --project-directory "$ROOT" \
-            -f "$ROOT/compose.yml" --env-file "$TEST_ENV" config \
-    | sed -e "s#$ROOT#<repo>#g" \
-          -e 's/\(CRAWL4AI_API_TOKEN: \).*/\1<redacted>/' \
-          -e 's/\(SEARXNG_SECRET: \).*/\1<redacted>/' \
-          -e 's/\(STRATA_API_KEY: \).*/\1<redacted>/' \
-          -e 's/\(API_KEY: \)test-strata-key-not-a-secret/\1<redacted>/'
+            -f "$ROOT/compose.yml" --env-file "$TEST_ENV" config --format json \
+    | python3 "$SCRIPT_DIR/canonicalize-compose.py" "$ROOT"
 }
 
 tmp=$(mktemp)

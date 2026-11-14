@@ -24,7 +24,9 @@ Credentials belong in `.env` (gitignored) or `data/` (gitignored).
 - `scripts/build-base.sh` — builds `ainode-base:python313` with `AINODE_USER_UID`
   from `.env`; a bare `docker build` always produces uid 1000.
 - `scripts/check-compose.sh` — renders `compose.yml` with `tests/compose.test.env`
-  and diffs against `tests/compose.golden.yml`; `--update` accepts the change.
+  and diffs against `tests/compose.golden.json` after canonicalising it (sorted
+  keys, compose-version cosmetics dropped, secrets redacted); `--update` accepts
+  the change.
 - `scripts/lib-env.sh` — shared `.env` loader and command checks.
 - `scripts/init-env.sh` — creates `.env` from `.env.example` and generates any
   empty `CRAWL4AI_API_TOKEN` / `SEARXNG_SECRET`; idempotent.

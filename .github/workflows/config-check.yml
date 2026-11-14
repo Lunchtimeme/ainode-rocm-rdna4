@@ -10,8 +10,12 @@
 # ==============================================================================
 name: config
 
+# Runs on pushes to main and on pull requests. Deliberately not on tag pushes:
+# a release tag points at a commit that was already tested, and running it twice
+# only doubles the notification noise.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

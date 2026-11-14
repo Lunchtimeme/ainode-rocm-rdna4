@@ -213,4 +213,4 @@ scripts/check-compose.sh --update # accept the current render as the new golden
 scripts/render-config.sh --check  # do the live vhosts match their templates?
 ```
 
-`tests/compose.golden.yml` is rendered from a fixed environment (`tests/compose.test.env`), not your `.env`, so it is reproducible on any machine and safe to run in CI.
+`tests/compose.golden.json` is rendered from a fixed environment (`tests/compose.test.env`), not your `.env`, and compared in a canonical form, so it is reproducible across compose versions and safe to run in CI.

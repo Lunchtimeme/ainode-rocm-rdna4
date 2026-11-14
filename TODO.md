@@ -57,7 +57,7 @@ that is not this machine. Everything cheap has been done.
 - [x] Prerequisites documented and checked: Compose >= 2.20, buildx, gettext;
       Podman claim removed
 - [x] `scripts/build-base.sh` builds the base image with the configured UID
-- [x] `scripts/check-compose.sh` + `tests/compose.golden.yml`: the compose
+- [x] `scripts/check-compose.sh` + `tests/compose.golden.json`: the compose
       regression harness is part of the repository, immune to exported shell
       variables, and runs in GitHub Actions
 - [x] `UPGRADING.md`: in-place upgrade, rollback, and what not to do

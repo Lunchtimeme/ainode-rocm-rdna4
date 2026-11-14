@@ -1,0 +1,634 @@
+{
+  "name": "ainode",
+  "networks": {
+    "ainode-internal": {
+      "driver": "bridge",
+      "ipam": {},
+      "name": "ainode-internal"
+    }
+  },
+  "services": {
+    "chroma": {
+      "build": {
+        "args": {
+          "CHROMADB_VERSION": "0.6.3",
+          "REBUILD_HNSWLIB": "false",
+          "USER_GID": "100",
+          "USER_UID": "1000"
+        },
+        "context": "<repo>",
+        "dockerfile": "./docker/chroma/Dockerfile"
+      },
+      "command": null,
+      "container_name": "ainode-chroma",
+      "entrypoint": null,
+      "hostname": "ainode-chroma",
+      "logging": {
+        "driver": "none"
+      },
+      "networks": {
+        "ainode-internal": null
+      },
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "bind": {},
+          "source": "<repo>/data/chroma",
+          "target": "/home/user/app/chroma",
+          "type": "bind"
+        },
+        {
+          "target": "/home/user/.cache",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        },
+        {
+          "target": "/tmp",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        }
+      ]
+    },
+    "comfyui": {
+      "build": {
+        "args": {
+          "AINODE_GPU_ARCH": "gfx1201",
+          "COMFYUI_REF": "v0.44.0",
+          "RENDER_GID": "28",
+          "USER_GID": "100",
+          "USER_UID": "1000",
+          "VIDEO_GID": "27"
+        },
+        "context": "<repo>",
+        "dockerfile": "./docker/comfyui/Dockerfile"
+      },
+      "command": null,
+      "container_name": "ainode-comfyui",
+      "devices": [
+        {
+          "permissions": "rwm",
+          "source": "/dev/kfd",
+          "target": "/dev/kfd"
+        },
+        {
+          "permissions": "rwm",
+          "source": "/dev/dri",
+          "target": "/dev/dri"
+        }
+      ],
+      "entrypoint": null,
+      "environment": {
+        "AMD_ENABLE_MIOPEN": "1",
+        "HIP_VISIBLE_DEVICES": "0",
+        "MIOPEN_FIND_MODE": "2",
+        "PYTORCH_ALLOC_CONF": "garbage_collection_threshold:0.8,max_split_size_mb:512",
+        "ROCR_VISIBLE_DEVICES": "0",
+        "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL": "1"
+      },
+      "group_add": [
+        "28",
+        "27"
+      ],
+      "hostname": "ainode-comfyui",
+      "image": "ainode-comfyui:latest",
+      "logging": {
+        "driver": "none"
+      },
+      "networks": {
+        "ainode-internal": null
+      },
+      "profiles": [
+        "comfyui"
+      ],
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "bind": {},
+          "source": "<repo>/data/comfyui/user",
+          "target": "/home/user/app/user",
+          "type": "bind"
+        },
+        {
+          "bind": {},
+          "source": "<repo>/data/comfyui/custom_nodes",
+          "target": "/home/user/app/custom_nodes",
+          "type": "bind"
+        },
+        {
+          "bind": {},
+          "source": "<repo>/data/common/models",
+          "target": "/home/user/app/models",
+          "type": "bind"
+        },
+        {
+          "target": "/home/user/.cache",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        },
+        {
+          "target": "/home/user/app/input",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        },
+        {
+          "target": "/home/user/app/output",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        },
+        {
+          "target": "/tmp",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        }
+      ]
+    },
+    "crawl4ai": {
+      "build": {
+        "context": "<repo>/docker/crawl4ai",
+        "dockerfile": "Dockerfile"
+      },
+      "command": null,
+      "container_name": "ainode-crawl4ai",
+      "entrypoint": null,
+      "environment": {
+        "CRAWL4AI_API_TOKEN": "<redacted>"
+      },
+      "hostname": "ainode-crawl4ai",
+      "image": "ainode-crawl4ai:latest",
+      "logging": {
+        "driver": "none"
+      },
+      "mem_limit": "4294967296",
+      "networks": {
+        "ainode-internal": null
+      },
+      "profiles": [
+        "crawl4ai"
+      ],
+      "restart": "unless-stopped",
+      "shm_size": "1073741824",
+      "volumes": [
+        {
+          "bind": {},
+          "read_only": true,
+          "source": "<repo>/data/crawl4ai/config.yml",
+          "target": "/app/config.yml",
+          "type": "bind"
+        }
+      ]
+    },
+    "kokoro-fastapi": {
+      "build": {
+        "args": {
+          "AINODE_KOKORO_REF": "61797914e5f8da0baf1d0b97d9d0b15c66625615",
+          "RENDER_GID": "28",
+          "USER_GID": "100",
+          "USER_UID": "1000",
+          "VIDEO_GID": "27"
+        },
+        "context": "<repo>",
+        "dockerfile": "./docker/kokoro-fastapi/Dockerfile"
+      },
+      "command": null,
+      "container_name": "ainode-kokoro-fastapi",
+      "devices": [
+        {
+          "permissions": "rwm",
+          "source": "/dev/kfd",
+          "target": "/dev/kfd"
+        },
+        {
+          "permissions": "rwm",
+          "source": "/dev/dri",
+          "target": "/dev/dri"
+        }
+      ],
+      "entrypoint": null,
+      "group_add": [
+        "28",
+        "27"
+      ],
+      "hostname": "ainode-kokoro-fastapi",
+      "logging": {
+        "driver": "none"
+      },
+      "networks": {
+        "ainode-internal": null
+      },
+      "profiles": [
+        "kokoro"
+      ],
+      "restart": "unless-stopped",
+      "tmpfs": [
+        "/tmp:exec"
+      ],
+      "volumes": [
+        {
+          "target": "/home/user/.cache",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        },
+        {
+          "target": "/home/user/app/output",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        }
+      ]
+    },
+    "ollama": {
+      "build": {
+        "args": {
+          "RENDER_GID": "28",
+          "USER_GID": "100",
+          "USER_UID": "1000",
+          "VIDEO_GID": "27"
+        },
+        "context": "<repo>",
+        "dockerfile": "./docker/ollama/Dockerfile"
+      },
+      "command": null,
+      "container_name": "ainode-ollama",
+      "devices": [
+        {
+          "permissions": "rwm",
+          "source": "/dev/kfd",
+          "target": "/dev/kfd"
+        },
+        {
+          "permissions": "rwm",
+          "source": "/dev/dri",
+          "target": "/dev/dri"
+        }
+      ],
+      "entrypoint": [
+        "/bin/sh",
+        "/opt/prism/start.sh"
+      ],
+      "environment": {
+        "PRISM_ENABLE": "1"
+      },
+      "group_add": [
+        "28",
+        "27"
+      ],
+      "hostname": "ainode-ollama",
+      "logging": {
+        "driver": "none"
+      },
+      "networks": {
+        "ainode-internal": null
+      },
+      "restart": "unless-stopped",
+      "tmpfs": [
+        "/home/user/tmp:exec,mode=01777"
+      ],
+      "volumes": [
+        {
+          "bind": {},
+          "read_only": true,
+          "source": "<repo>/docker/llamacpp",
+          "target": "/opt/prism",
+          "type": "bind"
+        },
+        {
+          "bind": {},
+          "source": "<repo>/data/ollama",
+          "target": "/home/user/.ollama",
+          "type": "bind"
+        },
+        {
+          "bind": {},
+          "source": "<repo>/data/common/models",
+          "target": "/models",
+          "type": "bind"
+        },
+        {
+          "target": "/home/user/.cache",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        },
+        {
+          "target": "/tmp",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        }
+      ]
+    },
+    "openwebui": {
+      "build": {
+        "args": {
+          "AINODE_OWUI_REF": "f8ae8a6c328946dc62cd0712961a0632574581bf",
+          "USER_GID": "100",
+          "USER_UID": "1000"
+        },
+        "context": "<repo>",
+        "dockerfile": "./docker/openwebui/Dockerfile"
+      },
+      "command": null,
+      "container_name": "ainode-openwebui",
+      "depends_on": {
+        "chroma": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "devices": [
+        {
+          "permissions": "rwm",
+          "source": "/dev/kfd",
+          "target": "/dev/kfd"
+        },
+        {
+          "permissions": "rwm",
+          "source": "/dev/dri",
+          "target": "/dev/dri"
+        }
+      ],
+      "entrypoint": null,
+      "environment": {
+        "CHROMA_HTTP_HOST": "ainode-chroma",
+        "DEFAULT_USER_ROLE": "admin",
+        "ENABLE_SIGNUP": "true",
+        "OLLAMA_BASE_URL": "http://ainode-ollama:11434",
+        "WEBUI_SECRET_KEY": "<redacted>"
+      },
+      "group_add": [
+        "28",
+        "27"
+      ],
+      "hostname": "ainode-openwebui",
+      "logging": {
+        "driver": "none"
+      },
+      "networks": {
+        "ainode-internal": null
+      },
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "bind": {},
+          "source": "<repo>/data/openwebui/data",
+          "target": "/home/user/app/backend/data",
+          "type": "bind"
+        },
+        {
+          "target": "/home/user/.cache",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        },
+        {
+          "target": "/home/user/app/backend/data/cache",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        },
+        {
+          "target": "/tmp",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        }
+      ]
+    },
+    "reverseproxy": {
+      "build": {
+        "context": "<repo>",
+        "dockerfile": "./docker/reverseproxy/Dockerfile"
+      },
+      "command": null,
+      "container_name": "ainode-reverseproxy",
+      "depends_on": {
+        "comfyui": {
+          "condition": "service_started",
+          "required": false
+        },
+        "ollama": {
+          "condition": "service_started",
+          "required": true
+        },
+        "openwebui": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "hostname": "ainode-reverseproxy",
+      "logging": {
+        "driver": "none"
+      },
+      "networks": {
+        "ainode-internal": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "80",
+          "target": 80
+        },
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "443",
+          "target": 443
+        },
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "5000",
+          "target": 5000
+        },
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "11434",
+          "target": 11434
+        }
+      ],
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "bind": {},
+          "source": "<repo>/data/reverseproxy/sites-enabled",
+          "target": "/etc/nginx/sites-enabled",
+          "type": "bind"
+        },
+        {
+          "bind": {},
+          "source": "<repo>/data/reverseproxy/htpasswd",
+          "target": "/etc/nginx/htpasswd",
+          "type": "bind"
+        },
+        {
+          "bind": {},
+          "source": "<repo>/ssl",
+          "target": "/etc/nginx/certs",
+          "type": "bind"
+        },
+        {
+          "target": "/tmp",
+          "tmpfs": {
+            "mode": 1023
+          },
+          "type": "tmpfs"
+        }
+      ]
+    },
+    "searxng": {
+      "command": null,
+      "container_name": "ainode-searxng",
+      "entrypoint": null,
+      "environment": {
+        "SEARXNG_BASE_URL": "http://searxng.localdomain/",
+        "SEARXNG_SECRET": "<redacted>"
+      },
+      "hostname": "ainode-searxng",
+      "image": "searxng/searxng:latest",
+      "logging": {
+        "driver": "none"
+      },
+      "networks": {
+        "ainode-internal": null
+      },
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8080",
+          "target": 8080
+        }
+      ],
+      "profiles": [
+        "searxng"
+      ],
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "bind": {},
+          "source": "<repo>/data/searxng",
+          "target": "/etc/searxng",
+          "type": "bind"
+        }
+      ]
+    },
+    "strata": {
+      "command": null,
+      "container_name": "ainode-strata",
+      "devices": [
+        {
+          "permissions": "rwm",
+          "source": "/dev/kfd",
+          "target": "/dev/kfd"
+        },
+        {
+          "permissions": "rwm",
+          "source": "/dev/dri",
+          "target": "/dev/dri"
+        }
+      ],
+      "entrypoint": null,
+      "environment": {
+        "API_KEY": "<redacted>",
+        "CONTEXT": "32k",
+        "MODEL": "IQ3_XXS",
+        "MODEL_PATH": "/models/strata",
+        "TUNE": "skip",
+        "VISION": "off"
+      },
+      "group_add": [
+        "28",
+        "27"
+      ],
+      "hostname": "ainode-strata",
+      "image": "ghcr.io/niko1221/strata:0.2.13-rocm-gfx120x",
+      "logging": {
+        "driver": "none"
+      },
+      "networks": {
+        "ainode-internal": null
+      },
+      "profiles": [
+        "strata"
+      ],
+      "restart": "unless-stopped",
+      "shm_size": "2147483648",
+      "stop_grace_period": "2m0s",
+      "ulimits": {
+        "memlock": {
+          "hard": -1,
+          "soft": -1
+        }
+      },
+      "volumes": [
+        {
+          "bind": {},
+          "source": "<repo>/data/strata",
+          "target": "/data",
+          "type": "bind"
+        },
+        {
+          "bind": {},
+          "read_only": true,
+          "source": "<repo>/data/common/models",
+          "target": "/models",
+          "type": "bind"
+        }
+      ]
+    }
+  },
+  "x-build-args-gpu": {
+    "RENDER_GID": "28",
+    "USER_GID": "100",
+    "USER_UID": "1000",
+    "VIDEO_GID": "27"
+  },
+  "x-build-args-user": {
+    "USER_GID": "100",
+    "USER_UID": "1000"
+  },
+  "x-common": {
+    "logging": {
+      "driver": "none"
+    },
+    "restart": "unless-stopped"
+  },
+  "x-common-render": {
+    "devices": [
+      "/dev/kfd",
+      "/dev/dri"
+    ],
+    "group_add": [
+      "28",
+      "27"
+    ],
+    "logging": {
+      "driver": "none"
+    },
+    "restart": "unless-stopped"
+  }
+}

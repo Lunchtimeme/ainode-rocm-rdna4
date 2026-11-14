@@ -1,7 +1,7 @@
 # AINode (ROCm)
 
 > **About this fork**
-> This is a fork of [legal-hkr/ainode-rocm](https://github.com/legal-hkr/ainode-rocm), retargeted for AMD RDNA4 GPUs (tested on RX 9070 XT). The original project targets RDNA3 (RX 7900 XTX / gfx1100); this fork switches the ComfyUI PyTorch ROCm nightly target to `gfx1201` (RX 9070 XT), adds a SearXNG metasearch service for Open WebUI web search and a Crawl4AI extraction API for agents. ComfyUI is pinned to a tested upstream release (see `COMFYUI_REF`), and the stack can optionally serve the ternary Bonsai 2 27B model through the PrismML llama.cpp fork alongside Ollama.
+> This is a fork of [legal-hkr/ainode-rocm](https://github.com/legal-hkr/ainode-rocm), retargeted for AMD RDNA4 GPUs (tested on RX 9070 XT). The original project targets RDNA3 (RX 7900 XTX / gfx1100); this fork selects the ComfyUI PyTorch ROCm wheel for the GPU you configure (`AINODE_GPU_ARCH`), adds a SearXNG metasearch service for Open WebUI web search and a Crawl4AI extraction API for agents. ComfyUI is pinned to a tested upstream release (see `AINODE_COMFYUI_REF`), and the stack can optionally serve the ternary Bonsai 2 27B model through the PrismML llama.cpp fork alongside Ollama.
 
 ## Description
 
@@ -14,6 +14,7 @@ A privacy-focused approach is implemented as follows:
 *   Telemetry across all components is disabled.
 *   Only the primary instance of Open WebUI is authorized to persistently store generated text and images. These can be located within the `data/openwebui/data` directory.
 *   The amnesic approach utilizes `tmpfs` for mounting input, output, and cache directories. This configuration necessitates periodic container restarts to prevent excessive RAM consumption.
+*   Every host-specific value lives in `.env`, and optional services are Docker Compose *profiles*: an installation only builds and runs what it asks for.
 
 ## Components
 
@@ -22,12 +23,12 @@ This repository contains Docker configuration files for setting up the following
 *   **Open WebUI:** A versatile web interface for interacting with various AI models.
 *   **Ollama:** A backend for Large Language Models (LLMs), providing a simple and efficient way to run and manage models.
 *   **Bonsai 2 (optional):** A ternary 27B model served by the PrismML llama.cpp fork, running alongside Ollama on port `8080`. Only active when the binaries and weights are installed; setup is in [AGENTS.md](AGENTS.md).
-*   **ComfyUI:** A node-based UI for Stable Diffusion, allowing for complex workflows and customization.
+*   **ComfyUI (optional profile):** A node-based UI for Stable Diffusion, allowing for complex workflows and customization.
 *   **ChromaDB:** A vector database for storing and retrieving embeddings, enabling efficient retrieval-augmented generation (RAG).
-*   **Kokoro FastAPI:** A backend for Text-to-Speech (TTS), providing high-quality voice generation.
-*   **SearXNG:** A metasearch engine that aggregates results from multiple search engines, used as a web search backend for Open WebUI.
-*   **Crawl4AI:** A self-hosted web extraction API for agents, exposed at `crawl4ai.localdomain`.
-*   **Strata (optional):** An alternative local model server with OpenAI- and Anthropic-compatible endpoints. Off by default; enable with the `strata` profile.
+*   **Kokoro FastAPI (optional profile):** A backend for Text-to-Speech (TTS), providing high-quality voice generation.
+*   **SearXNG (optional profile):** A metasearch engine that aggregates results from multiple search engines, used as a web search backend for Open WebUI.
+*   **Crawl4AI (optional profile):** A self-hosted web extraction API for agents, exposed at `crawl4ai.localdomain`.
+*   **Strata (optional profile):** An alternative local model server with OpenAI- and Anthropic-compatible endpoints. Off by default; enable with the `strata` profile.
 *   **Nginx:** A reverse proxy server, managing incoming requests and routing them to the appropriate backend services.
 
 ## Repository Structure
@@ -36,86 +37,117 @@ The repository is organized as follows:
 
 *   `docker` - Contains Dockerfiles for all stack components.
 *   `docker/llamacpp` - Startup script and router preset for the optional Bonsai 2 server (`start.sh`, `models.ini`). The PrismML binaries are downloaded by the user and ignored by git.
-*   `scripts` - Host-side helpers: `render-config.sh` generates the nginx vhosts, `set-comfyui-password.sh` writes the basic-auth file.
-*   `examples` - Versioned templates. `examples/reverseproxy/*` are the *source* of the generated vhosts.
+*   `scripts` - Host-side helpers: `render-config.sh` (nginx vhosts), `set-comfyui-password.sh` (basic auth), `build-base.sh` (base image with your UID), `check-compose.sh` (regression test).
+*   `examples` - Versioned templates. `examples/reverseproxy/*` are the *source* of the generated vhosts; `examples/searxng/` and `examples/crawl4ai/` hold the runtime config files you copy into `data/`.
+*   `tests` - Golden configuration for `scripts/check-compose.sh`.
 *   `AGENTS.md` - Service access details and conventions for agents.
+*   `UPGRADING.md` - How to update an existing installation without losing data.
 *   `compose.yml` - Docker Compose configuration; every host-specific value comes from `.env`.
 *   `.env.example` - Documented list of every variable, with the defaults.
 
 ## Prerequisites
 
-*   System with AMD ROCm toolkit installed, the stack was built and tested on Linux.
-*   Docker and Docker Compose installed, Podman should work, too.
+*   Linux (tested on Arch/CachyOS) with the `amdgpu` kernel driver. The ROCm userspace lives inside the images; a system ROCm install is not required.
+*   **Docker Engine with Compose 2.20 or newer** (`docker compose version`). 2.20 is the first release with `depends_on: required: false`, which the optional services rely on.
+*   **BuildKit**, i.e. the `docker buildx` plugin (`docker buildx version`). The Dockerfiles use cache mounts so repeated builds do not re-download packages. On Arch: `sudo pacman -S docker-buildx`.
+*   **gettext**, which provides `envsubst` (`command -v envsubst`). `scripts/render-config.sh` needs it. On Arch: `sudo pacman -S gettext`; Debian/Ubuntu: `gettext-base`; Fedora: `gettext`.
+*   **git**, `curl`, and `openssl`.
+*   Disk: roughly **45 GB free** for the minimal stack and **110 GB** for every optional service. Images are built locally, so plan for the build cache too.
+*   Your user in the `docker` group (so the compose commands work without sudo).
+
+Podman is **not** supported: the helper scripts call `docker exec` by default. If you want to experiment, set `AINODE_DOCKER=podman`, but expect rough edges.
 
 ## Getting Started
 
-Follow these steps to get your AINode stack up and running:
+### Before you start
+
+The first build is the expensive part, and it is a download. To give an idea, on the optional services:
+
+| Profile | Built or pulled | Size |
+|---|---|---|
+| `searxng` | pulled | 0.4 GB |
+| `crawl4ai` | pulled | 8 GB |
+| `comfyui` | built | 24 GB (`~13 GB` downloaded) |
+| `kokoro` | built | 28 GB (`~19 GB` downloaded) |
+| `strata` | pulled | ~3 GB, plus the model |
+
+That is why `.env.example` starts with only `searxng,crawl4ai`: it gets you a working stack quickly, and you can add the GPU-heavy services later by editing one line.
 
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/Lunchtimeme/ainode-rocm-rdna4.git ainode
     cd ainode
     ```
-    This command will download the repository to your local machine. Make sure you have Git installed.
 
 2.  **Create the data directory structure:**
     ```bash
-    mkdir -p data/{chroma,comfyui/user,comfyui/custom_nodes,common/models,desktop/home,desktop/home_i3,ollama,openwebui/data,reverseproxy/htpasswd,reverseproxy/sites-enabled,searxng} ssl
+    mkdir -p data/{chroma,comfyui/user,comfyui/custom_nodes,common/models,crawl4ai,desktop/home,desktop/home_i3,ollama,openwebui/data,reverseproxy/htpasswd,reverseproxy/sites-enabled,searxng,strata} ssl
     ```
-    The nginx vhost directory is `sites-enabled` (hyphen): `compose.yml` mounts exactly that path, and anything else leaves nginx with no server blocks at all.
+    `sites-enabled` is spelled with a hyphen: `compose.yml` mounts exactly that path, and anything else leaves nginx with no server blocks at all.
 
-3.  **Place SSL certificates:**
-    Copy the `ainode.crt` and `ainode.key` files into the `ssl` directory. These files are used for secure communication via HTTPS. You can generate your own self-signed certificates or use a certificate from a trusted Certificate Authority (CA), example on how to do that can be found in the `examples/ssl` directory. The entire ssl directory is gitignored so your certificates never leave your machine.
+3.  **Seed the runtime configuration files.** These two files are mounted by path, so they must exist *before* the containers start:
+    ```bash
+    cp examples/searxng/settings.yml data/searxng/settings.yml
+    cp examples/crawl4ai/config.yml  data/crawl4ai/config.yml
+    ```
+    * SearXNG needs `settings.yml` for its engine list and for the JSON API that Open WebUI and agents use. Without it SearXNG generates a default file that serves HTML only.
+    * Crawl4AI mounts `config.yml` as a *file*. If it is missing, Docker creates an empty **directory** in its place and the service will not start.
 
-4.  **Create Basic Auth credentials for ComfyUI:**
+    `scripts/render-config.sh` checks both and tells you if one is missing.
+
+4.  **Place SSL certificates:**
+    Copy `ainode.crt` and `ainode.key` into the `ssl` directory; the reverse proxy uses them for HTTPS. Two ways to get them are in [examples/ssl/README.md](examples/ssl/README.md): a one-command self-signed certificate for trying things out, or a local CA you install once so every browser trusts the stack. Either way **the certificate must list every hostname you use** - the SAN list in `examples/ssl/ainode.conf` matches the vhosts. The `ssl` directory is gitignored so your keys never leave your machine.
+
+5.  **Create Basic Auth credentials for ComfyUI** (only if you enable the `comfyui` profile):
     ```bash
     scripts/set-comfyui-password.sh --user comfyui
     ```
     It prompts for a password and writes `data/reverseproxy/htpasswd/.htpasswd`. The hash must not live in `.env`: `$apr1$...` contains `$`, which compose reads as variable interpolation and silently strips.
 
-5.  **Configure the installation:**
+6.  **Configure the installation:**
     ```bash
     cp .env.example .env
     chmod 600 .env
     $EDITOR .env
     ```
-    Everything host-specific lives there; `.env.example` documents each variable and compose carries a working default for all of them. The two values people normally set:
+    Everything host-specific lives there, and `.env.example` documents every variable. Three things are worth doing before the first build:
 
-    * `COMPOSE_PROFILES` - which services this machine runs. Always on: `ollama`, `openwebui`, `chroma`, `reverseproxy`. Optional: `comfyui`, `kokoro`, `searxng`, `crawl4ai`, `strata`. A service whose profile is not listed is neither built nor started, so this is also how you keep a small disk footprint.
-    * The secrets: `CRAWL4AI_API_TOKEN`, `SEARXNG_SECRET` (`openssl rand -hex 24`). `WEBUI_SECRET_KEY` may stay empty, in which case Open WebUI generates and stores its own.
+    * **Host ids.** `AINODE_USER_UID` is your `id -u`. `AINODE_RENDER_GID` and `AINODE_VIDEO_GID` come from:
+      ```bash
+      getent group render | cut -d: -f3
+      getent group video  | cut -d: -f3
+      ```
+      They are compiled into the images, so set them now rather than rebuilding later. Wrong GPU group ids are usually invisible (the device nodes are world-writable on most systems) until a stricter `udev` rule appears.
+    * **`COMPOSE_PROFILES`** - which services this machine runs. Always on: `ollama`, `openwebui`, `chroma`, `reverseproxy`. Optional: `comfyui`, `kokoro`, `searxng`, `crawl4ai`, `strata`. A service whose profile is not listed is neither built nor started.
+    * **The secrets.** `CRAWL4AI_API_TOKEN` and `SEARXNG_SECRET`, generated with `openssl rand -hex 24`. `WEBUI_SECRET_KEY` may stay empty, in which case Open WebUI generates and stores its own.
 
-    SearXNG needs no file editing for its secret: `SEARXNG_SECRET` overrides `data/searxng/settings.yml`. The engine list lives in `examples/searxng/settings.yml`; copy it to `data/searxng/settings.yml` if you want to change which engines are used.
-
-    Bonsai 2 is optional: extract the PrismML build into `docker/llamacpp/`, put the GGUF weights in `data/common/models/bonsai/`, and register them in `docker/llamacpp/models.ini`; see [AGENTS.md](AGENTS.md). Set `PRISM_ENABLE=0` in `.env` to skip the second server entirely.
+    If your GPU is not an RX 9070 XT, set `AINODE_GPU_ARCH` (`gfx1100` for RX 7900 series, `gfx1201` for RX 9070). Bonsai 2 is optional: extract the PrismML build into `docker/llamacpp/`, put the GGUF weights in `data/common/models/bonsai/`, and register them in `docker/llamacpp/models.ini`; see [AGENTS.md](AGENTS.md). Set `PRISM_ENABLE=0` to skip the second server entirely.
 
     Then generate the nginx vhosts from their templates:
     ```bash
     scripts/render-config.sh
     ```
-    This writes `data/reverseproxy/sites-enabled/*` from `examples/reverseproxy/*`, skipping any vhost whose profile is off and filling in the LAN domain and the two bearer tokens. Never edit the generated files; edit the templates and re-run it. `scripts/render-config.sh --check` tells you whether the live config matches the templates.
+    This writes `data/reverseproxy/sites-enabled/*` (mode 600, they contain the bearer tokens) from `examples/reverseproxy/*`, skipping any vhost whose profile is off. Never edit the generated files; edit the templates and re-run it. `scripts/render-config.sh --check` tells you whether the live config matches the templates.
 
-6.  **Build and run the stack:**
-    Navigate to the repository directory and start the Docker containers:
+7.  **Build and run the stack:**
     ```bash
-    # 1. Build the base image first (required)
-    docker build -t ainode-base:python313 ./docker/base
+    # 1. Base image, built with your UID (required by every Python service)
+    scripts/build-base.sh
 
     # 2. Build the services enabled in COMPOSE_PROFILES
     docker compose build
 
-    # 3. Start them (individual services: up -d --no-deps <service>)
+    # 3. Start them
     docker compose up -d
     ```
-    The `-d` flag runs the containers in detached mode (in the background). It is highly suggested to run the stack without `-d` at first to monitor the startup process.
+    `docker compose build` only builds what the profiles select. Start with `docker compose up` (no `-d`) the first time if you want to watch the startup output.
 
-7.  **Access the interfaces:**
+8.  **Access the interfaces:**
     *   Open WebUI is served through the reverse proxy on ports `80`/`443`.
     *   The Ollama API is published on `11434`.
-    *   SearXNG listens on `8080` on the host and is proxied as `http://searxng.localdomain`.
+    *   SearXNG is proxied as `http://searxng.localdomain`; its port is published on loopback only.
     *   The optional Bonsai 2 endpoint is at `http://ainode-ollama:8080/v1` (LAN: `http://bonsai.localdomain`).
     *   Crawl4AI is at `http://crawl4ai.localdomain` (LAN; no credentials).
-    
-    You can access these interfaces using your web browser or with tools like `curl` or `Postman`.
 
     The definitive hostname list is `examples/reverseproxy/`. If you run AINode on localhost and have no LAN DNS, add this to `/etc/hosts`:
     ```configuration
@@ -128,11 +160,10 @@ Follow these steps to get your AINode stack up and running:
     127.0.0.1   kokoro-fastapi.localdomain kokoro-fastapi
     127.0.0.1   strata.localdomain         strata
     ```
-    With this setup, you can access the components by using the specified hostname in your URL, e.g., `https://comfyui`, `https://openwebui`, etc.
+    Remove the entries for services you did not enable; their hostnames answer `404` on purpose.
 
-8.  **Configure service URLs in Open WebUI:**
-    Note that `ENABLE_SIGNUP` is now a `.env` variable (`ENABLE_SIGNUP=true`, then set it to `false` after creating the admin account). Changing it is a restart, not a rebuild.
-    Once the stack is up and running, log into Open WebUI and add the internal service endpoints through the web GUI:
+9.  **Configure service URLs in Open WebUI:**
+    `ENABLE_SIGNUP` is a `.env` variable: create the admin account, then set it to `false` and restart Open WebUI (a restart, not a rebuild). Then add the internal endpoints:
     *   **SearXNG (web search):** `http://ainode-searxng:8080`
     *   **ComfyUI (image generation):** `http://ainode-comfyui:8188`
     *   **Ollama (LLM backend):** `http://ainode-ollama:11434`
@@ -143,3 +174,40 @@ Follow these steps to get your AINode stack up and running:
 Optional Bonsai 2 setup (PrismML binaries, weights, `models.ini`, Open WebUI connection) is documented in [AGENTS.md](AGENTS.md); the stack runs with Ollama alone if you skip Bonsai.
 
 For VRAM management, `examples/openwebui/tools/native_image_gen_v2.py` can be imported through **Workspace → Tools** in Open WebUI; it unloads Ollama, Bonsai and ComfyUI models before and after image generation.
+
+## Turning services on and off
+
+`COMPOSE_PROFILES` decides what is *installed* (built, present, startable). Stopping and starting individual services is a separate, cheaper operation:
+
+```bash
+# stop ComfyUI temporarily, e.g. to give the GPU to a game
+docker compose stop comfyui
+
+# start it again (the profile has to be named when the container does not exist yet)
+docker compose --profile comfyui up -d comfyui
+
+# disable it for good: remove it from COMPOSE_PROFILES in .env, then
+scripts/render-config.sh            # drops its vhost, so the hostname 404s
+docker compose up -d --remove-orphans
+```
+
+What happens to what:
+
+*   **Data survives everything.** `data/` is a bind mount, not a container layer, so stopping, removing or disabling a service never touches models, chats, custom nodes or the vector store.
+*   **Images survive `stop` and `down`.** They are only removed by `docker compose down --rmi local` or `docker image prune`, which you should not need.
+*   **Disabling a profile does not delete the image.** Re-enabling it is instant until you prune.
+*   **A disabled service's hostname answers 404**, not 502: `scripts/render-config.sh` removes its vhost and the catch-all vhost answers instead. A 502 means the vhost exists but the container is down.
+
+## Updating an existing installation
+
+See [UPGRADING.md](UPGRADING.md). Short version: back up `data/`, `ssl/` and `.env`; pull; run `scripts/render-config.sh --check`; build only what changed; `docker compose up -d`. Never re-clone over an existing installation.
+
+## Development
+
+```bash
+scripts/check-compose.sh          # did compose.yml drift from the tested golden config?
+scripts/check-compose.sh --update # accept the current render as the new golden
+scripts/render-config.sh --check  # do the live vhosts match their templates?
+```
+
+`tests/compose.golden.yml` is rendered from a fixed environment (`tests/compose.test.env`), not your `.env`, so it is reproducible on any machine and safe to run in CI.

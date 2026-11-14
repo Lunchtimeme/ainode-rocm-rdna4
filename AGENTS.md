@@ -16,8 +16,16 @@ Credentials belong in `.env` (gitignored) or `data/` (gitignored).
   (Open WebUI's `ENABLE_SIGNUP`, `WEBUI_SECRET_KEY`, ...) now live here, because
   runtime env overrides image `ENV` and flipping one costs a restart, not a rebuild.
 - `scripts/render-config.sh` — generates `data/reverseproxy/sites-enabled/*` from
-  `examples/reverseproxy/*`; `--check` diffs, `--reload` applies.
+  `examples/reverseproxy/*`; `--check` diffs, `--reload` applies. Refuses to run
+  without `envsubst`, refuses to run when an enabled profile's bind-mount source
+  (`data/crawl4ai/config.yml`) is missing, and writes the vhosts mode 600 because
+  they contain bearer tokens.
 - `scripts/set-comfyui-password.sh` — writes the ComfyUI basic-auth file.
+- `scripts/build-base.sh` — builds `ainode-base:python313` with `AINODE_USER_UID`
+  from `.env`; a bare `docker build` always produces uid 1000.
+- `scripts/check-compose.sh` — renders `compose.yml` with `tests/compose.test.env`
+  and diffs against `tests/compose.golden.yml`; `--update` accepts the change.
+- `scripts/lib-env.sh` — shared `.env` loader and command checks.
 - `data/<service>/` — runtime state and configuration (gitignored). Sanitized
   copies live in `examples/<service>/` so the repo shows the expected shape
   without local secrets. **`data/reverseproxy/sites-enabled/` is generated**:
@@ -56,6 +64,13 @@ House rules:
   — reload, never restart.
 - **DNS names** are `*.localdomain` records on the LAN router. Adding a name is a
   router change, not an `/etc/hosts` edit.
+- **Prerequisites:** Compose >= 2.20 (`depends_on: required: false`), BuildKit via
+  the `docker-buildx` plugin (cache mounts), `gettext` for `envsubst`. The scripts
+  check what they need and name the package that provides it.
+- **Upgrades are in place**, never a fresh clone next to the old tree: container
+  names, ports and `data/` are shared. See `UPGRADING.md`.
+- **Secrets with `$` in them** (apr1 hashes) cannot live in `.env`; they stay files
+  under `data/reverseproxy/htpasswd/`.
 
 ## Service map
 
@@ -170,6 +185,7 @@ after accepting the certificate.
 ## Verification
 
 ```
+scripts/check-compose.sh                                  # compose.yml vs golden render
 docker compose -f ~/ainode/compose.yml config --services   # what COMPOSE_PROFILES selects
 scripts/render-config.sh --check                          # live vhosts vs templates
 docker compose -f ~/ainode/compose.yml ps
@@ -180,8 +196,9 @@ curl -s http://bonsai.localdomain/v1/models  | head -c 200
 curl -s -o /dev/null -w '%{http_code}\n' http://comfyui.localdomain/
 ```
 
-Expected: `config --services` lists the core four plus whatever the profiles add;
-`render-config.sh --check` prints "vhosts are up to date"; SearXNG and Ollama
+Expected: `check-compose.sh` prints "matches the golden config"; `config --services`
+lists the core four plus whatever the profiles add; `render-config.sh --check` prints
+"vhosts are up to date"; SearXNG and Ollama
 return JSON; Crawl4AI returns
 `{"status":"ok",...}`; Bonsai returns a model list; ComfyUI returns `401` without
 basic auth (that is the auth gate working).

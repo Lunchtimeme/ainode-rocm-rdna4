@@ -1,5 +1,24 @@
 # Local CA Setup
 
+## Quick start: a self-signed certificate (no CA)
+
+If you just want the stack to come up and don't care that the browser warns you
+once, skip the CA below and run this from the repository root:
+
+```bash
+mkdir -p ssl
+openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+    -keyout ssl/ainode.key -out ssl/ainode.crt \
+    -subj "/CN=ainode.localdomain" \
+    -addext "subjectAltName=DNS:ainode.localdomain,DNS:openwebui.localdomain,DNS:ollama.localdomain,DNS:comfyui.localdomain,DNS:kokoro-fastapi.localdomain,DNS:bonsai.localdomain,DNS:searxng.localdomain,DNS:crawl4ai.localdomain,DNS:strata.localdomain,IP:127.0.0.1"
+```
+
+Every name the proxy answers to has to be in `subjectAltName`; the list above is
+the one in `ainode.conf` without the short aliases. A certificate that is missing
+a name still encrypts the connection, but clients will refuse it for that
+hostname, which is exactly why the guide below builds a CA: install `ca.crt`
+once and every certificate it signs is trusted.
+
 ## Introduction
 
 This guide will walk you through setting up a local Certificate Authority (CA) and generating SSL certificates for your awesome projects. Having your own CA gives you more control, which can be of help if you're running a multi-container setup.

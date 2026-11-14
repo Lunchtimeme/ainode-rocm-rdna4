@@ -116,10 +116,15 @@ pulled; the rest are built locally, so name them explicitly if you want to limit
 what happens:
 
 ```bash
-docker compose pull                 # new upstream images, if any
-docker compose build                # rebuild only what this machine's profiles select
-docker compose up -d                # recreate what changed
+docker compose pull --ignore-buildable   # pull only images that come from a registry
+docker compose build                     # rebuild only what this machine's profiles select
+docker compose up -d                     # recreate what changed
 ```
+
+`--ignore-buildable` matters: most services here are built from the Dockerfiles in
+this repository, and without the flag compose also tries to *pull* them from a
+registry and prints confusing "pull access denied" errors for images that were
+never published.
 
 `docker compose up -d` is safe: it leaves containers alone when nothing about
 them changed, and your `data/` is never touched.
@@ -156,6 +161,16 @@ you made at the top of this file.
   is hours. `docker image prune` (dangling only) is always safe.
 
 ---
+
+## Versions come with the repository
+
+The upstream revisions this stack is built from (Open WebUI, Kokoro, ComfyUI,
+ChromaDB, the Crawl4AI image) are defaults inside `compose.yml` and the
+Dockerfiles, so checking out a newer tag of *this* repository also moves you to
+the versions that were tested with it. Your `.env` can override any of them
+(`AINODE_OWUI_REF`, `AINODE_KOKORO_REF`, `AINODE_COMFYUI_REF`, ...) - do that to
+try a newer upstream release, and remember it when you next upgrade, because an
+override in `.env` stays until you change it.
 
 ## Where everything lives
 

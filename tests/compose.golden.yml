@@ -155,6 +155,7 @@ services:
       context: <repo>
       dockerfile: ./docker/kokoro-fastapi/Dockerfile
       args:
+        AINODE_KOKORO_REF: 61797914e5f8da0baf1d0b97d9d0b15c66625615
         RENDER_GID: "28"
         USER_GID: "100"
         USER_UID: "1000"
@@ -259,6 +260,7 @@ services:
       context: <repo>
       dockerfile: ./docker/openwebui/Dockerfile
       args:
+        AINODE_OWUI_REF: f8ae8a6c328946dc62cd0712961a0632574581bf
         USER_GID: "100"
         USER_UID: "1000"
     depends_on:

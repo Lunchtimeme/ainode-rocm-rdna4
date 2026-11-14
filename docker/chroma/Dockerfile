@@ -84,6 +84,10 @@ FROM ainode-base:python313 AS runtime
 
 ARG USER_UID=1000
 ARG USER_GID=100
+# The runtime stage used to clone master while the builder pinned a version, so
+# the config files and scripts could come from a different release than the
+# installed package. Same arg as the builder stage.
+ARG CHROMADB_VERSION=0.6.3
 
 # ------------------------------------------------------------------------------
 # ChromaDB environment configuration
@@ -107,8 +111,8 @@ COPY --from=builder --chown=user:users /home/user/venv /home/user/venv
 USER user
 WORKDIR /home/user/app
 
-# Clone ChromaDB for config files and scripts (minimal clone)
-RUN git clone --depth 1 https://github.com/chroma-core/chroma.git .
+# Clone ChromaDB for config files and scripts (minimal clone, pinned version)
+RUN git clone --depth 1 --branch ${CHROMADB_VERSION} https://github.com/chroma-core/chroma.git .
 
 # Disable telemetry user ID (set to zeros even with telemetry disabled)
 RUN mkdir -p .cache/chroma \

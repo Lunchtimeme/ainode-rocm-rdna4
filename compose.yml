@@ -175,6 +175,8 @@ services:
       dockerfile: ./docker/kokoro-fastapi/Dockerfile
       args:
         <<: *build-args-gpu
+        # Tag or commit; keep in sync with docker/kokoro-fastapi/Dockerfile.
+        AINODE_KOKORO_REF: ${AINODE_KOKORO_REF:-61797914e5f8da0baf1d0b97d9d0b15c66625615}
     container_name: ${AINODE_PREFIX:-ainode}-kokoro-fastapi
     hostname: ${AINODE_PREFIX:-ainode}-kokoro-fastapi
     networks:
@@ -252,6 +254,9 @@ services:
       dockerfile: ./docker/openwebui/Dockerfile
       args:
         <<: *build-args-user
+        # Tag or commit; the default is the commit this stack was built against.
+        # Keep in sync with the ARG default in docker/openwebui/Dockerfile.
+        AINODE_OWUI_REF: ${AINODE_OWUI_REF:-f8ae8a6c328946dc62cd0712961a0632574581bf}
     container_name: ${AINODE_PREFIX:-ainode}-openwebui
     hostname: ${AINODE_PREFIX:-ainode}-openwebui
     # These used to exist only as ENV in docker/openwebui/Dockerfile, which

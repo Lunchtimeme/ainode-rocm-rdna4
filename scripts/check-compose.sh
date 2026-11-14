@@ -36,11 +36,12 @@ esac
 
 ainode_require_cmd docker "compose config is the renderer under test" "pacman -S docker docker-compose" || exit 1
 
-# Render with a fixed environment: no inherited COMPOSE_*, no user .env.
+# Render with a clean environment. `env -i` matters: any AINODE_* or COMPOSE_*
+# exported in the user's shell outranks --env-file, so a leftover variable would
+# make this test pass or fail for reasons that have nothing to do with the file
+# under test. compose config needs no daemon, only the CLI.
 render() {
-    env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME -u COMPOSE_PROFILES \
-        -u AINODE_PREFIX -u AINODE_LAN_DOMAIN -u CRAWL4AI_API_TOKEN \
-        -u SEARXNG_SECRET -u STRATA_API_KEY \
+    env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
         docker compose --project-directory "$ROOT" \
             -f "$ROOT/compose.yml" --env-file "$TEST_ENV" config \
     | sed -e "s#$ROOT#<repo>#g" \
@@ -62,8 +63,33 @@ fi
 
 [ -f "$GOLDEN" ] || { echo "no $GOLDEN; run with --update once" >&2; exit 1; }
 
+# --- revision pins ---------------------------------------------------------
+# The same default lives in compose.yml (so .env can override it) and in the
+# Dockerfile ARG (so a bare `docker build` still works). Guard against the two
+# drifting apart, which would silently build a different revision than the one
+# the repository documents.
+pin_drift=0
+# check_pin <build-arg key> <env variable> <Dockerfile>
+check_pin() {
+    local key=$1 var=$2 file=$3 c d
+    c=$(grep -F "${key}: \${${var}:-" "$ROOT/compose.yml" | head -1 || true)
+    [ -n "$c" ] || return 0
+    c=${c#*:-}; c=${c%%\}*}
+    d=$(grep -oE "^ARG ${key}=[^ ]+" "$file" | head -1 || true)
+    [ -n "$d" ] || return 0
+    d=${d#*=}
+    if [ "$c" != "$d" ]; then
+        echo "pin drift: ${var} resolves to '$c' in compose.yml but the image default is '$d' (${file#"$ROOT"/})" >&2
+        pin_drift=1
+    fi
+}
+check_pin AINODE_OWUI_REF   AINODE_OWUI_REF   "$ROOT/docker/openwebui/Dockerfile"
+check_pin AINODE_KOKORO_REF AINODE_KOKORO_REF "$ROOT/docker/kokoro-fastapi/Dockerfile"
+check_pin COMFYUI_REF       AINODE_COMFYUI_REF "$ROOT/docker/comfyui/Dockerfile"
+[ "$pin_drift" = 0 ] || exit 1
+
 if diff -u "$GOLDEN" "$tmp" > /tmp/ainode-compose-diff.$$ 2>&1; then
-    echo "compose.yml matches the golden config" >&2
+    echo "compose.yml matches the golden config (pins consistent)" >&2
     rm -f /tmp/ainode-compose-diff.$$
     exit 0
 fi

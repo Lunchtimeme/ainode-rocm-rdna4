@@ -75,8 +75,15 @@ RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
 USER user
 WORKDIR /home/user/app
 
-# Clone repository and set up scripts
-RUN git clone --depth 1 https://github.com/remsky/Kokoro-FastAPI.git . \
+# Kokoro-FastAPI revision: a tag or a commit id. Default = the commit this
+# image was built against; override with AINODE_KOKORO_REF in .env.
+# Keep in sync with compose.yml.
+ARG AINODE_KOKORO_REF=61797914e5f8da0baf1d0b97d9d0b15c66625615
+# Clone that revision and set up the project's scripts
+RUN git init -q . \
+    && git remote add origin https://github.com/remsky/Kokoro-FastAPI.git \
+    && git fetch -q --depth 1 origin "${AINODE_KOKORO_REF}" \
+    && git checkout -q FETCH_HEAD \
     && cp docker/scripts/* ./ \
     && chmod +x ./*.sh
 

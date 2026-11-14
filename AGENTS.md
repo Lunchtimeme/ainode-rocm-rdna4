@@ -26,6 +26,10 @@ Credentials belong in `.env` (gitignored) or `data/` (gitignored).
 - `scripts/check-compose.sh` — renders `compose.yml` with `tests/compose.test.env`
   and diffs against `tests/compose.golden.yml`; `--update` accepts the change.
 - `scripts/lib-env.sh` — shared `.env` loader and command checks.
+- `scripts/init-env.sh` — creates `.env` from `.env.example` and generates any
+  empty `CRAWL4AI_API_TOKEN` / `SEARXNG_SECRET`; idempotent.
+- `.github/workflows/config-check.yml` — runs the compose golden test, the shell
+  syntax check and the template render on every push. No image is built.
 - `data/<service>/` — runtime state and configuration (gitignored). Sanitized
   copies live in `examples/<service>/` so the repo shows the expected shape
   without local secrets. **`data/reverseproxy/sites-enabled/` is generated**:
@@ -69,6 +73,11 @@ House rules:
   check what they need and name the package that provides it.
 - **Upgrades are in place**, never a fresh clone next to the old tree: container
   names, ports and `data/` are shared. See `UPGRADING.md`.
+- **Version pins are repository defaults, not `.env` defaults.** The tested
+  upstream revision is the default in `compose.yml` (`${VAR:-<ref>}`) and in the
+  Dockerfile `ARG`, so checking out a newer tag of this repo moves the pins with
+  it. `.env` only ever *overrides* them, for someone trying a newer release.
+  `scripts/check-compose.sh` fails when the two defaults disagree.
 - **Secrets with `$` in them** (apr1 hashes) cannot live in `.env`; they stay files
   under `data/reverseproxy/htpasswd/`.
 

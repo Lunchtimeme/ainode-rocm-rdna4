@@ -34,10 +34,16 @@ RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
 
 WORKDIR /build
 ENV NODE_OPTIONS="--max-old-space-size=8192"
-# Invalidate cache for git pull
-ARG CACHEBURST=1
-# Clone and build frontend
-RUN git clone --depth 1 https://github.com/open-webui/open-webui.git . \
+# Open WebUI revision to build: a tag (v0.13.3) or a commit id both work.
+# Default = the commit this stack was built and tested against; override it in
+# .env with AINODE_OWUI_REF. Keep in sync with compose.yml.
+ARG AINODE_OWUI_REF=f8ae8a6c328946dc62cd0712961a0632574581bf
+# Build the frontend from that exact revision (the ref now drives cache
+# invalidation, so there is no CACHEBURST knob any more).
+RUN git init -q . \
+    && git remote add origin https://github.com/open-webui/open-webui.git \
+    && git fetch -q --depth 1 origin "${AINODE_OWUI_REF}" \
+    && git checkout -q FETCH_HEAD \
     # "--force" workaround for dependency resolution issue
     # See: https://github.com/open-webui/open-webui/issues/15880
     && npm ci --force \
@@ -122,10 +128,13 @@ RUN --mount=type=cache,target=/var/cache/pacman/pkg pacman -Syu --noconfirm \
 USER user
 WORKDIR /home/user/app
 
-# Invalidate cache for git pull
-ARG CACHEBURST=1
-# Clone repository (backend code only, frontend comes from builder stage)
-RUN git clone --depth 1 https://github.com/open-webui/open-webui.git .
+# Backend code only; the frontend comes from the builder stage. Same revision
+# as above, so both stages always agree.
+ARG AINODE_OWUI_REF=f8ae8a6c328946dc62cd0712961a0632574581bf
+RUN git init -q . \
+    && git remote add origin https://github.com/open-webui/open-webui.git \
+    && git fetch -q --depth 1 origin "${AINODE_OWUI_REF}" \
+    && git checkout -q FETCH_HEAD
 
 # Disable telemetry user ID (set to zeros even with telemetry disabled)
 RUN mkdir -p .cache/chroma \

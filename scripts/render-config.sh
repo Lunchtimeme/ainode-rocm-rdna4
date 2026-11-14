@@ -76,6 +76,24 @@ export PRISM_ENABLE=${PRISM_ENABLE:-1}
 # starts - and the directory it leaves behind is owned by root, so the obvious
 # retry then fails with permission denied. Catch it before the user does.
 preflight=0
+if ainode_has_profile crawl4ai && [ -z "${CRAWL4AI_API_TOKEN:-}" ]; then
+    cat >&2 <<EOF
+error: the crawl4ai profile is enabled but CRAWL4AI_API_TOKEN is empty.
+       The reverse proxy authenticates to Crawl4AI with it, so without a token
+       its vhost is not generated and the service is unreachable from the LAN.
+       Generate one with:  scripts/init-env.sh
+EOF
+    preflight=1
+fi
+if ainode_has_profile searxng && [ -z "${SEARXNG_SECRET:-}" ]; then
+    cat >&2 <<EOF
+error: the searxng profile is enabled but SEARXNG_SECRET is empty.
+       SearXNG needs it to sign its own session cookies; the example
+       settings.yml only holds a placeholder. Generate one with:
+         scripts/init-env.sh
+EOF
+    preflight=1
+fi
 if ainode_has_profile crawl4ai && [ ! -f "$ROOT/data/crawl4ai/config.yml" ]; then
     cat >&2 <<EOF
 error: data/crawl4ai/config.yml is missing.

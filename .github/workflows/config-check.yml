@@ -1,0 +1,63 @@
+# ==============================================================================
+# config - checks that need no GPU and no Docker build
+# ==============================================================================
+# These catch the failure modes that only show up on someone else's machine:
+# a compose file that no longer renders, a template that drifted from the
+# generated vhosts, a script with a syntax error, a version pin that disagrees
+# with the Dockerfile default.
+#
+# No image is built and no container is started, so this runs in seconds.
+# ==============================================================================
+name: config
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tools
+        run: |
+          # envsubst lives in gettext-base; compose and git ship with the runner
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gettext-base
+          docker compose version
+          git --version
+
+      - name: shell syntax
+        run: |
+          for f in scripts/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: compose config matches the golden file
+        # NOTE: the golden was rendered by a specific compose version. If this
+        # step fails on formatting alone after a runner update, regenerate it
+        # once with `scripts/check-compose.sh --update` and commit the result.
+        run: scripts/check-compose.sh
+
+      - name: templates render into vhosts
+        run: |
+          # a fresh tree has no data/: create just what the renderer requires
+          mkdir -p data/crawl4ai data/searxng data/reverseproxy/sites-enabled
+          cp examples/crawl4ai/config.yml data/crawl4ai/config.yml
+          cp examples/searxng/settings.yml data/searxng/settings.yml
+          scripts/init-env.sh
+          scripts/render-config.sh
+          ls -l data/reverseproxy/sites-enabled
+          # the generated files carry bearer tokens
+          test "$(stat -c %a data/reverseproxy/sites-enabled/40crawl4ai)" = "600"
+
+# Deliberately no `docker buildx build --check` step: it exits non-zero for two
+# heuristic false positives in docker/openwebui/Dockerfile (an empty
+# OPENAI_API_KEY placeholder and the boolean WEBUI_AUTH), both of which are
+# legitimate ENV instructions here. Run it by hand when editing a Dockerfile.

@@ -106,22 +106,16 @@ That is why `.env.example` starts with only `searxng,crawl4ai`: it gets you a wo
 
 6.  **Configure the installation:**
     ```bash
-    cp .env.example .env
-    chmod 600 .env
+    scripts/init-env.sh
     $EDITOR .env
     ```
-    Everything host-specific lives there, and `.env.example` documents every variable. Three things are worth doing before the first build:
+    `init-env.sh` creates `.env` from the example, locks it down, and generates `CRAWL4AI_API_TOKEN` and `SEARXNG_SECRET`. Both are needed by the default profiles: Crawl4AI authenticates to the proxy with its token, and SearXNG signs its session cookies with the secret - the example settings file only holds a placeholder. `scripts/render-config.sh` refuses to run while either is empty, so you cannot get a half-working stack by accident. Then check three things:
 
-    * **Host ids.** `AINODE_USER_UID` is your `id -u` and is compiled into the images, so set it before the first build. The two GPU group ids come from:
-      ```bash
-      getent group render | cut -d: -f3
-      getent group video  | cut -d: -f3
-      ```
-      They are applied at container start, not at build time, so getting them wrong costs a restart rather than a rebuild. Wrong values are usually invisible (the device nodes are world-writable on most systems) until a stricter `udev` rule appears.
+    * **Host id.** `AINODE_USER_UID` is your `id -u`; it is compiled into the images, so set it before the first build. The GPU group ids (`getent group render`, `getent group video`, third field) are applied at container start, so a wrong value costs a restart, not a rebuild.
     * **`COMPOSE_PROFILES`** - which services this machine runs. Always on: `ollama`, `openwebui`, `chroma`, `reverseproxy`. Optional: `comfyui`, `kokoro`, `searxng`, `crawl4ai`, `strata`. A service whose profile is not listed is neither built nor started.
-    * **The secrets.** `CRAWL4AI_API_TOKEN` and `SEARXNG_SECRET`, generated with `openssl rand -hex 24`. `WEBUI_SECRET_KEY` may stay empty, in which case Open WebUI generates and stores its own.
+    * **`AINODE_GPU_ARCH`** if your card is not an RX 9070 XT: `gfx1100` for RX 7900 series, `gfx1201` for RX 9070.
 
-    If your GPU is not an RX 9070 XT, set `AINODE_GPU_ARCH` (`gfx1100` for RX 7900 series, `gfx1201` for RX 9070). Bonsai 2 is optional: extract the PrismML build into `docker/llamacpp/`, put the GGUF weights in `data/common/models/bonsai/`, and register them in `docker/llamacpp/models.ini`; see [AGENTS.md](AGENTS.md). Set `PRISM_ENABLE=0` to skip the second server entirely.
+    `WEBUI_SECRET_KEY` can stay empty; Open WebUI then generates and stores its own. Bonsai 2 is optional: extract the PrismML build into `docker/llamacpp/`, put the GGUF weights in `data/common/models/bonsai/`, and register them in `docker/llamacpp/models.ini`; see [AGENTS.md](AGENTS.md). Set `PRISM_ENABLE=0` to skip the second server entirely.
 
     Then generate the nginx vhosts from their templates:
     ```bash
@@ -197,6 +191,15 @@ What happens to what:
 *   **Images survive `stop` and `down`.** They are only removed by `docker compose down --rmi local` or `docker image prune`, which you should not need.
 *   **Disabling a profile does not delete the image.** Re-enabling it is instant until you prune.
 *   **A disabled service's hostname answers 404**, not 502: `scripts/render-config.sh` removes its vhost and the catch-all vhost answers instead. A 502 means the vhost exists but the container is down.
+
+### Strata does not replace Ollama by itself
+
+The `strata` profile adds a *second* inference server; it does not disable Ollama
+and does not re-point Open WebUI, because Ollama is a core service. To make Strata
+your main backend, stop Ollama (`docker compose stop ollama`) and add an **OpenAI**
+connection in Open WebUI pointing at `http://ainode-strata:8080/v1` with the same
+`STRATA_API_KEY`. Both engines want the same VRAM, so treat them as alternatives and
+run one at a time unless you know the model fits twice.
 
 ## Updating an existing installation
 

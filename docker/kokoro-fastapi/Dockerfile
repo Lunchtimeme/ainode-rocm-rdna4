@@ -26,6 +26,10 @@ FROM ainode-base:python313
 # ------------------------------------------------------------------------------
 ARG RENDER_GID=28
 ARG VIDEO_GID=27
+# Needed by the uv cache mounts below (BuildKit creates cache dirs root-owned
+# unless it is told which user will write to them).
+ARG USER_UID=1000
+ARG USER_GID=100
 
 # ------------------------------------------------------------------------------
 # Kokoro FastAPI environment configuration
@@ -100,16 +104,20 @@ RUN sed -i 's/spacy==3.8.5/spacy==3.8.7/g' pyproject.toml \
 # Python dependencies via UV
 # ------------------------------------------------------------------------------
 # Using UV for faster dependency resolution and installation.
-# PyTorch is installed separately first for better layer caching.
+#
+# No separate PyTorch install here on purpose. It used to pip-install the
+# rocm6.4 wheels into the base image's /home/user/venv, which the ENV PATH below
+# shadows with this project's own venv: 14 GB of GPU wheels that were never
+# imported by the running service (which is CPU, DEVICE=cpu by default).
+# `uv sync --extra ${DEVICE}` below installs the torch this container actually
+# uses. Keep it that way, or the image grows by ~14 GB for nothing.
 # ------------------------------------------------------------------------------
-RUN --mount=type=cache,target=/home/user/.cache/pip pip install \
-    torch \
-    torchvision \
-    torchaudio \
-    --index-url https://download.pytorch.org/whl/rocm6.4
 
 # Install UV and sync dependencies
-RUN --mount=type=cache,target=/home/user/.cache/pip --mount=type=cache,target=/home/user/.cache/uv pip install uv \
+# uid/gid on the cache mounts: BuildKit creates them root-owned otherwise, and
+# this step runs as `user`, so uv would fail with "Permission denied" on its
+# first write to /home/user/.cache/uv.
+RUN --mount=type=cache,target=/home/user/.cache/pip,uid=${USER_UID},gid=${USER_GID} --mount=type=cache,target=/home/user/.cache/uv,uid=${USER_UID},gid=${USER_GID} pip install uv \
     && uv venv --python 3.13 \
     && uv sync --extra ${DEVICE}
 
@@ -118,6 +126,11 @@ RUN --mount=type=cache,target=/home/user/.cache/pip --mount=type=cache,target=/h
 # ------------------------------------------------------------------------------
 # Downloads the voice model during build to avoid first-run delays.
 # Set DOWNLOAD_MODEL=false to skip this step and download at runtime.
+#
+# This runs before the ENV PATH switch at the bottom, so it uses the base
+# image's python, not the project venv. That is fine: download_model.py only
+# needs loguru and does not import torch. Do not move the PATH switch up
+# without re-checking, and do not assume the base venv has torch.
 # ------------------------------------------------------------------------------
 RUN --mount=type=cache,target=/home/user/.cache/pip if [ "${DOWNLOAD_MODEL}" = "true" ]; then \
         pip install loguru \

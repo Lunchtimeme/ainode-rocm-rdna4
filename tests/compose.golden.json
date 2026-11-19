@@ -194,6 +194,13 @@
       "container_name": "ainode-hindsight",
       "entrypoint": null,
       "environment": {
+        "HINDSIGHT_API_DECISION_MODEL_API_KEY": "local",
+        "HINDSIGHT_API_DECISION_MODEL_BASE_URL": "http://ainode-hindsight-decider:8000",
+        "HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT": "1",
+        "HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS": "7168",
+        "HINDSIGHT_API_DECISION_MODEL_MODEL": "hs-decide-1-flash",
+        "HINDSIGHT_API_DECISION_MODEL_PROVIDER": "none",
+        "HINDSIGHT_API_DECISION_MODEL_TIMEOUT": "120",
         "HINDSIGHT_API_ENABLE_OBSERVATIONS": "true",
         "HINDSIGHT_API_LLM_API_KEY": "not-needed",
         "HINDSIGHT_API_LLM_BASE_URL": "http://ainode-ollama:8080/v1",
@@ -204,6 +211,10 @@
         "HINDSIGHT_API_LLM_STRICT_SCHEMA": "true",
         "HINDSIGHT_API_LLM_TIMEOUT": "1800",
         "HINDSIGHT_API_LOG_LEVEL": "info",
+        "HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL": "false",
+        "HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL": "false",
+        "HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK": "true",
+        "HINDSIGHT_API_REFLECT_USE_DECISION_MODEL": "false",
         "HINDSIGHT_API_REFLECT_WALL_TIMEOUT": "1800"
       },
       "hostname": "ainode-hindsight",
@@ -242,6 +253,59 @@
             "mode": 1023
           },
           "type": "tmpfs"
+        }
+      ]
+    },
+    "hindsight-decider": {
+      "build": {
+        "args": {
+          "HS_DECIDE_REV": "e2c789026dfd1f7608cafb2ef6a9bb31397af802",
+          "TORCH_VERSION": "2.13.0",
+          "TRANSFORMERS_VERSION": "5.23.0",
+          "USER_GID": "100",
+          "USER_UID": "1000"
+        },
+        "context": "<repo>/docker/hindsight-decider",
+        "dockerfile": "Dockerfile"
+      },
+      "command": null,
+      "container_name": "ainode-hindsight-decider",
+      "cpus": 8,
+      "entrypoint": null,
+      "environment": {
+        "HS_DECIDE_DTYPE": "bfloat16",
+        "HS_DECIDE_MAX_REQUEST_TOKENS": "7168",
+        "MKL_NUM_THREADS": "8",
+        "OMP_NUM_THREADS": "8"
+      },
+      "hostname": "ainode-hindsight-decider",
+      "logging": {
+        "driver": "none"
+      },
+      "mem_limit": "4294967296",
+      "networks": {
+        "ainode-internal": null
+      },
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8001",
+          "target": 8000
+        }
+      ],
+      "profiles": [
+        "hindsight-decider"
+      ],
+      "restart": "unless-stopped",
+      "stop_grace_period": "30s",
+      "volumes": [
+        {
+          "bind": {},
+          "source": "<repo>/data/decider",
+          "target": "/models",
+          "type": "bind"
         }
       ]
     },

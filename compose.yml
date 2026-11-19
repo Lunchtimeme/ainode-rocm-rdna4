@@ -457,6 +457,30 @@ services:
       # memories found" while the facts sit in the bank. See README.
       - HINDSIGHT_API_ENABLE_OBSERVATIONS=${AINODE_HINDSIGHT_OBSERVATIONS:-true}
       - HINDSIGHT_API_LOG_LEVEL=${AINODE_HINDSIGHT_LOG_LEVEL:-info}
+      # Typed decision model (the hindsight-decider service). `none` disables it
+      # and everything falls back to the LLM above; `hindsight` means "a server
+      # speaking /v1/systemone", which is what the decider exposes on 8000.
+      - HINDSIGHT_API_DECISION_MODEL_PROVIDER=${AINODE_HINDSIGHT_DECISION_PROVIDER:-none}
+      - HINDSIGHT_API_DECISION_MODEL_BASE_URL=${AINODE_HINDSIGHT_DECISION_BASE_URL:-http://ainode-hindsight-decider:8000}
+      # The decider checks nothing unless it was started with --api-key, but the
+      # client shape requires a value.
+      - HINDSIGHT_API_DECISION_MODEL_API_KEY=${AINODE_HINDSIGHT_DECISION_API_KEY:-local}
+      - HINDSIGHT_API_DECISION_MODEL_MODEL=hs-decide-1-flash
+      # The CPU server answers one request at a time; the default of 24 only
+      # builds a queue that ends in client timeouts.
+      - HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT=${AINODE_HINDSIGHT_DECISION_CONCURRENCY:-1}
+      - HINDSIGHT_API_DECISION_MODEL_TIMEOUT=${AINODE_HINDSIGHT_DECISION_TIMEOUT:-120}
+      # Must match the decider's --max-request-tokens (7168): the server refuses
+      # anything longer with max_tokens_exceeded and Hindsight splits the work.
+      - HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS=${AINODE_HINDSIGHT_DECISION_MAX_REQUEST_TOKENS:-7168}
+      # Off by default: an unavailable decider is not worth failing a recall for.
+      - HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK=${AINODE_HINDSIGHT_DECISION_FALLBACK:-true}
+      # Start narrow. Consolidation uses the decider (its service default);
+      # reflect and the mental models keep using the 27B until the decisions
+      # have been spot-checked, because a wrong judgement is silent.
+      - HINDSIGHT_API_REFLECT_USE_DECISION_MODEL=${AINODE_HINDSIGHT_REFLECT_DECIDER:-false}
+      - HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL=${AINODE_HINDSIGHT_MENTAL_DECIDER:-false}
+      - HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL=${AINODE_HINDSIGHT_MENTAL_DECIDER:-false}
     volumes:
       # Embedded PostgreSQL and the bank itself.
       - ./data/hindsight:/home/hindsight/.pg0
@@ -464,6 +488,68 @@ services:
         target: /tmp
         tmpfs:
           mode: 01777
+
+  # ============================================================================
+  # Hindsight decider - typed decision model for the memory service (optional)
+  # ============================================================================
+  # hs-decide-1-flash: a 0.8B model that answers typed questions about a state
+  # in ONE forward pass (no generated tokens) and returns a probability per
+  # option. It replaces a share of the memory service's LLM calls.
+  #
+  # CPU on purpose. The model is prefill-only, so CPU's weak decode speed does
+  # not apply, and the GPU is already carrying a 27B router plus ComfyUI. vLLM
+  # would need its own ROCm build for gfx1201 - a third GPU runtime.
+  #
+  # Its own image because the vendor serving package needs Python 3.12+ and the
+  # Hindsight image ships 3.11: no torch layer can be shared, so a child image
+  # would only couple this to upstream's internals.
+  #
+  # Off by default. Turning on the profile is not enough: the memory service has
+  # to be pointed at it with AINODE_HINDSIGHT_DECISION_PROVIDER=hindsight.
+  # ============================================================================
+  hindsight-decider:
+    <<: *common
+    profiles: ["hindsight-decider"]
+    build:
+      context: ./docker/hindsight-decider
+      args:
+        <<: *build-args-user
+        TORCH_VERSION: ${AINODE_DECIDER_TORCH:-2.13.0}
+        TRANSFORMERS_VERSION: ${AINODE_DECIDER_TRANSFORMERS:-5.23.0}
+        HS_DECIDE_REV: ${AINODE_DECIDER_REF:-e2c789026dfd1f7608cafb2ef6a9bb31397af802}
+    container_name: ${AINODE_PREFIX:-ainode}-hindsight-decider
+    hostname: ${AINODE_PREFIX:-ainode}-hindsight-decider
+    networks:
+      - ainode-internal
+    ports:
+      # Loopback only: the memory service reaches it by container name, this is
+      # for `curl /version` and latency tests from the host.
+      - "${AINODE_DECIDER_BIND:-127.0.0.1}:${AINODE_DECIDER_PORT:-8001}:8000"
+    environment:
+      # One CCD's worth of cores. The 9950X3D's two CCDs have different cache
+      # sizes, and spanning them costs more in cross-CCD traffic than it buys.
+      - OMP_NUM_THREADS=${AINODE_DECIDER_THREADS:-8}
+      - MKL_NUM_THREADS=${AINODE_DECIDER_THREADS:-8}
+      # bfloat16 is ~2x faster than the vendor's float32 CPU default here and
+      # holds ~0.6 GB instead of 3.3 GB. Measured on this box: a 6.5k-token
+      # request answers in 6.4 s against 12.3 s, with probabilities that differ
+      # in the third decimal. Set float32 if the CPU lacks fast bf16 matmul,
+      # with AINODE_DECIDER_MEM=4g: float32 needs 3.3 GB and would be OOM-killed
+      # under the default cap.
+      - HS_DECIDE_DTYPE=${AINODE_DECIDER_DTYPE:-bfloat16}
+      # The server refuses longer requests; keep it equal to the memory service's
+      # AINODE_HINDSIGHT_DECISION_MAX_REQUEST_TOKENS or its larger limit draws 400s.
+      - HS_DECIDE_MAX_REQUEST_TOKENS=${AINODE_HINDSIGHT_DECISION_MAX_REQUEST_TOKENS:-7168}
+    volumes:
+      # Weights, not baked into the image: a recreate must not re-download 1.5 GiB.
+      # Mounted at /models so the entrypoint can create hs-decide-1-flash beside
+      # the hub cache (a bind on /models/hf would leave /models root-owned).
+      - ./data/decider:/models
+    cpus: ${AINODE_DECIDER_CPUS:-8}
+    # Ceiling, not a reservation: bf16 peaks around 1.5 GB under a long request.
+    # float32 needs 3.3 GB, so raise this to 4g if you switch dtype.
+    mem_limit: ${AINODE_DECIDER_MEM:-4g}
+    stop_grace_period: 30s
 
   # ============================================================================
   # Reverse Proxy (nginx)

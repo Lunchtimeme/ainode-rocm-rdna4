@@ -118,6 +118,9 @@ what happens:
 ```bash
 docker compose pull --ignore-buildable   # pull only images that come from a registry
 docker compose build                     # rebuild only what this machine's profiles select
+mkdir -p data/decider                    # only when hindsight-decider is in COMPOSE_PROFILES:
+                                         # compose would otherwise create it root-owned, and the
+                                         # container runs as your uid and cannot write the weights
 docker compose up -d                     # recreate what changed
 ```
 

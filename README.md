@@ -30,6 +30,7 @@ This repository contains Docker configuration files for setting up the following
 *   **Crawl4AI (optional profile):** A self-hosted web extraction API for agents, exposed at `crawl4ai.localdomain`.
 *   **Strata (optional profile):** An alternative local model server with OpenAI- and Anthropic-compatible endpoints. Off by default; enable with the `strata` profile.
 *   **Hindsight (optional profile):** An agent memory service (retain / recall / reflect) backed by an embedded PostgreSQL. CPU only, so it needs no GPU; the LLM that extracts facts is configurable and defaults to the Bonsai 2 router in this stack. Exposed at `hindsight.localdomain`.
+*   **Hindsight decider (optional, `hindsight-decider` profile):** A 0.8B model that answers typed yes/no, choice and score questions about a memory in one forward pass, replacing a share of the memory service's LLM calls. CPU only, internal network only, off by default.
 *   **Nginx:** A reverse proxy server, managing incoming requests and routing them to the appropriate backend services.
 
 ## Repository Structure
@@ -69,8 +70,10 @@ The first build is the expensive part, and it is a download. To give an idea, on
 | `searxng` | pulled | 0.4 GB |
 | `crawl4ai` | pulled | 8 GB |
 | `comfyui` | built | 24 GB (`~13 GB` downloaded) |
-| `kokoro` | built | 28 GB (`~19 GB` downloaded) |
+| `kokoro` | built | 7.3 GB |
 | `strata` | pulled | ~3 GB, plus the model |
+| `hindsight` | pulled | 1.1 GB download, 4.1 GB on disk |
+| `hindsight-decider` | built | 1.7 GB, plus 1.5 GiB of weights on first start |
 
 That is why `.env.example` starts with only `searxng,crawl4ai`: it gets you a working stack quickly, and you can add the GPU-heavy services later by editing one line.
 
@@ -82,7 +85,7 @@ That is why `.env.example` starts with only `searxng,crawl4ai`: it gets you a wo
 
 2.  **Create the data directory structure:**
     ```bash
-    mkdir -p data/{chroma,comfyui/user,comfyui/custom_nodes,common/models,crawl4ai,desktop/home,desktop/home_i3,ollama,openwebui/data,reverseproxy/htpasswd,reverseproxy/sites-enabled,searxng,strata} ssl
+    mkdir -p data/{chroma,comfyui/user,comfyui/custom_nodes,common/models,crawl4ai,decider,desktop/home,desktop/home_i3,hindsight,ollama,openwebui/data,reverseproxy/htpasswd,reverseproxy/sites-enabled,searxng,strata} ssl
     ```
     `sites-enabled` is spelled with a hyphen: `compose.yml` mounts exactly that path, and anything else leaves nginx with no server blocks at all.
 
@@ -113,7 +116,7 @@ That is why `.env.example` starts with only `searxng,crawl4ai`: it gets you a wo
     `init-env.sh` creates `.env` from the example, locks it down, and generates `CRAWL4AI_API_TOKEN` and `SEARXNG_SECRET`. Both are needed by the default profiles: Crawl4AI authenticates to the proxy with its token, and SearXNG signs its session cookies with the secret - the example settings file only holds a placeholder. `scripts/render-config.sh` refuses to run while either is empty, so you cannot get a half-working stack by accident. Then check three things:
 
     * **Host id.** `AINODE_USER_UID` is your `id -u`; it is compiled into the images, so set it before the first build. The GPU group ids (`getent group render`, `getent group video`, third field) are applied at container start, so a wrong value costs a restart, not a rebuild.
-    * **`COMPOSE_PROFILES`** - which services this machine runs. Always on: `ollama`, `openwebui`, `chroma`, `reverseproxy`. Optional: `comfyui`, `kokoro`, `searxng`, `crawl4ai`, `strata`. A service whose profile is not listed is neither built nor started.
+    * **`COMPOSE_PROFILES`** - which services this machine runs. Always on: `ollama`, `openwebui`, `chroma`, `reverseproxy`. Optional: `comfyui`, `kokoro`, `searxng`, `crawl4ai`, `strata`, `hindsight`, `hindsight-decider`. A service whose profile is not listed is neither built nor started.
     * **`AINODE_GPU_ARCH`** if your card is not an RX 9070 XT: `gfx1100` for RX 7900 series, `gfx1201` for RX 9070.
 
     `WEBUI_SECRET_KEY` can stay empty; Open WebUI then generates and stores its own. Bonsai 2 is optional: extract the PrismML build into `docker/llamacpp/`, put the GGUF weights in `data/common/models/bonsai/`, and register them in `docker/llamacpp/models.ini`; see [AGENTS.md](AGENTS.md). Set `PRISM_ENABLE=0` to skip the second server entirely.
@@ -154,6 +157,7 @@ That is why `.env.example` starts with only `searxng,crawl4ai`: it gets you a wo
     127.0.0.1   crawl4ai.localdomain       crawl4ai
     127.0.0.1   kokoro-fastapi.localdomain kokoro-fastapi
     127.0.0.1   strata.localdomain         strata
+    127.0.0.1   hindsight.localdomain      hindsight
     ```
     Remove the entries for services you did not enable; their hostnames answer `404` on purpose.
 
@@ -202,42 +206,40 @@ connection in Open WebUI pointing at `http://ainode-strata:8080/v1` with the sam
 `STRATA_API_KEY`. Both engines want the same VRAM, so treat them as alternatives and
 run one at a time unless you know the model fits twice.
 
-### Hindsight and the GPU: it does not use one
+### Memory: Hindsight and its decider (both CPU-only)
 
-`hindsight` is the only optional service that is deliberately CPU-only. The
-embedder (112M) and the reranker (114M) run in-process on the CPU, the store is an
-embedded PostgreSQL, and nothing in it opens `/dev/kfd` or needs ROCm. Its image
-is 1.1 GB compressed to pull and 4.1 GB on disk, on a plain `python:3.11-slim`
-base (Debian 13, Python 3.11.18 inside the running container).
-
-That is why it does **not** use `x-common-render`. Running it on a ROCm base to
-"share libraries" would add several GB to a service that would never load them —
-the shared thing between the GPU services here is the PyTorch stack, and Hindsight
-does not need it.
+`hindsight` (retain / recall / reflect over an embedded PostgreSQL) and its optional
+`hindsight-decider` (a 0.8B model that answers typed yes/no, score and choice questions
+in one forward pass) run on the CPU and never open `/dev/kfd`, so neither uses
+`x-common-render`. The GPU anchor exists to share PyTorch and the ROCm stack; neither
+service loads a GPU runtime, and the decider's torch is the CPU-only wheel. Its image is
+separate for the same reason it cannot use the anchor: the vendor's server needs Python
+3.12+ while the Hindsight image ships 3.11, so there is no torch layer worth sharing.
 
 ```bash
-# .env
-COMPOSE_PROFILES=searxng,crawl4ai,hindsight
-AINODE_HINDSIGHT_LLM_BASE_URL=http://ainode-ollama:8080/v1
-AINODE_HINDSIGHT_LLM_MODEL=bonsai2-27b-16k
+# .env - the profiles, plus pointing the memory service at the decider
+COMPOSE_PROFILES=searxng,crawl4ai,hindsight,hindsight-decider
+AINODE_HINDSIGHT_DECISION_PROVIDER=hindsight
 
 scripts/render-config.sh                 # adds the hindsight.localdomain vhost
-docker compose up -d hindsight
+docker compose up -d hindsight hindsight-decider
 curl -s http://127.0.0.1:8888/health     # {"status":"healthy","database":"connected",...}
 ```
 
-The bank lives in `data/hindsight/` (a bind mount), so it survives rebuilds and
-`docker compose down`. The LLM is the only model-backed part: point
-`AINODE_HINDSIGHT_LLM_BASE_URL` at any OpenAI-compatible endpoint, local or
-hosted. With the default (Bonsai 2 at 16k) memory text never leaves the machine,
-and the 16k preset is the right one — peak consolidation prompt is ~6.5k tokens,
-so the 128k alias only costs VRAM.
+The bank lives in `data/hindsight/` and the 1.5 GiB of decider weights in
+`data/decider/hs-decide-1-flash` (fetched on first start, resumable); both survive
+rebuilds. The LLM that extracts facts defaults to Bonsai 2 at 16k — peak consolidation
+prompt is ~6.5k tokens, so the 128k alias only costs VRAM, and memory text never leaves
+the machine. Keep observations on: clients recall that consolidated layer first, so with
+consolidation off a populated bank still answers "No relevant memories found".
 
-Observations — the consolidated layer Hindsight writes on top of raw facts — are on by
-default. Clients such as Hermes recall that layer first, so leaving consolidation off
-produces a bank that is visibly populated (`/stats` shows the facts) and still answers
-"No relevant memories found". Turn it off only for a client configured to recall raw
-types.
+Decisions run on the CPU in bfloat16 — measured here at 0.17 s for a short request and
+6.4 s for a consolidation-sized one, against 0.44 s and 12.3 s in float32 (the vendor's
+CPU default, which also needs 5x the memory). Reflect and the mental models are off
+until the decisions have been spot-checked; set `AINODE_HINDSIGHT_DECISION_PROVIDER=none`
+to send everything back to the 27B.
+
+Endpoints, settings and the bf16 measurements: [AGENTS.md](AGENTS.md).
 
 ## Updating an existing installation
 

@@ -88,6 +88,9 @@ check_pin() {
 check_pin AINODE_OWUI_REF   AINODE_OWUI_REF   "$ROOT/docker/openwebui/Dockerfile"
 check_pin AINODE_KOKORO_REF AINODE_KOKORO_REF "$ROOT/docker/kokoro-fastapi/Dockerfile"
 check_pin COMFYUI_REF       AINODE_COMFYUI_REF "$ROOT/docker/comfyui/Dockerfile"
+check_pin TORCH_VERSION        AINODE_DECIDER_TORCH        "$ROOT/docker/hindsight-decider/Dockerfile"
+check_pin TRANSFORMERS_VERSION AINODE_DECIDER_TRANSFORMERS "$ROOT/docker/hindsight-decider/Dockerfile"
+check_pin HS_DECIDE_REV        AINODE_DECIDER_REF          "$ROOT/docker/hindsight-decider/Dockerfile"
 [ "$pin_drift" = 0 ] || exit 1
 
 if diff -u "$GOLDEN" "$tmp" > /tmp/ainode-compose-diff.$$ 2>&1; then

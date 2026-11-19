@@ -49,7 +49,7 @@ House rules:
   network, or published ports. Never restart or rebuild the ROCm services
   (`comfyui`, `ollama`, `kokoro-fastapi`, `openwebui`) without an explicit request.
 - **Optional services are compose profiles** (`comfyui`, `kokoro`, `searxng`,
-  `crawl4ai`, `strata`, `hindsight`); `COMPOSE_PROFILES` in `.env` is the switch. Anything
+  `crawl4ai`, `strata`, `hindsight`, `hindsight-decider`); `COMPOSE_PROFILES` in `.env` is the switch. Anything
   gated that way must also keep `reverseproxy`'s `depends_on` entry
   `required: false` and must not leave a vhost pointing at it — an nginx
   `proxy_pass` to a missing container stops nginx from spawning any worker and
@@ -95,6 +95,7 @@ House rules:
 | Open WebUI | `ainode-openwebui` | `ainode-openwebui:8080` | `http://openwebui.localdomain` |
 | Strata (opt.) | `ainode-strata` | `ainode-strata:8080` | `http://strata.localdomain` |
 | Hindsight (opt.) | `ainode-hindsight` | `ainode-hindsight:8888` | `http://hindsight.localdomain` |
+| Hindsight decider (opt.) | `ainode-hindsight-decider` | `ainode-hindsight-decider:8000` | none, by design |
 
 `chroma` and `kokoro-fastapi` are internal-only; reach them by container name on
 `ainode-internal`. `hindsight` also publishes `127.0.0.1:8888` for the host
@@ -213,6 +214,46 @@ after accepting the certificate.
   "No relevant memories found" while `stats` shows the facts are there.
 - Restarting is cheap but not free: pg0 needs the 1m `stop_grace_period` to shut
   down cleanly. Do not `docker kill` it, and do not delete `data/hindsight/`.
+
+## Hindsight decider — typed decisions (optional, CPU only)
+
+- `hs-decide-1-flash`, 0.8B, is not a chat model: it takes a state plus typed
+  questions and returns one probability per option in a single forward pass. It
+  answers `POST /v1/systemone`, plus `/health` and `/version`.
+- Two switches: the `hindsight-decider` profile **and**
+  `AINODE_HINDSIGHT_DECISION_PROVIDER=hindsight`. Without the second, the
+  container runs and is never called. `none` (the default) sends every decision
+  back to the 27B.
+- CPU only, and deliberately outside the GPU anchor. It is prefill-only, so the
+  GPU's advantage is small, and vLLM would need its own ROCm build for gfx1201 —
+  a third GPU runtime. Do not move it onto `x-common-render`.
+- Weights live in `data/decider/hs-decide-1-flash` (1.5 GiB, fetched on first
+  start by `docker/hindsight-decider/entrypoint.sh`, resumable). `HF_HOME` is
+  `data/decider/hf`. A recreate reuses both; deleting them costs one download.
+  The entrypoint keeps a `.revision` marker and requires `model.safetensors`,
+  `config.json` and `tokenizer.json`, so a half-finished download is refetched
+  instead of restart-looping.
+- `--max-request-tokens 7168` on the server and
+  `AINODE_HINDSIGHT_DECISION_MAX_REQUEST_TOKENS=7168` on the client must agree:
+  longer requests get a 400 `max_tokens_exceeded` and Hindsight splits the work.
+  Both read that one variable, so raising it moves the two together.
+- The server handles one request at a time, so keep
+  `AINODE_HINDSIGHT_DECISION_CONCURRENCY=1`. A larger value only builds a queue.
+- `float32` is the vendor's CPU default; this stack runs `bfloat16`
+  (`AINODE_DECIDER_DTYPE`). Measured here on 8 threads: 225 tokens in 0.17 s and a
+  6,571-token request in 6.4 s, against 0.44 s and 12.3 s on float32, with
+  probabilities differing in the third decimal. Memory drops from 3.3 GB to ~0.6 GB.
+  Set `AINODE_DECIDER_DTYPE=float32` on a CPU without fast bf16 matmul, and raise
+  `AINODE_DECIDER_MEM` to `4g` with it: the default 4g cap fits bf16 (~1.5 GB
+  peak) with room to spare, but float32 at 3.3 GB would sit at the edge.
+- Latency is CPU-scale but not the order of magnitude the estimates feared: the
+  vendor's 167 ms is a GPU number for short requests, and 6.4 s on a
+  consolidation-sized one is still cheaper than the 27B extraction call it
+  replaces. One retain burned ~53 s of decider CPU with the GPU idle.
+- Consolidation uses the decider first. `AINODE_HINDSIGHT_REFLECT_DECIDER` and
+  `AINODE_HINDSIGHT_MENTAL_DECIDER` widen it to reflect and the mental models;
+  leave them `false` until decisions have been spot-checked, because a wrong
+  judgement is silent where a crash is not.
 
 ## Verification
 

@@ -49,7 +49,7 @@ House rules:
   network, or published ports. Never restart or rebuild the ROCm services
   (`comfyui`, `ollama`, `kokoro-fastapi`, `openwebui`) without an explicit request.
 - **Optional services are compose profiles** (`comfyui`, `kokoro`, `searxng`,
-  `crawl4ai`, `strata`); `COMPOSE_PROFILES` in `.env` is the switch. Anything
+  `crawl4ai`, `strata`, `hindsight`); `COMPOSE_PROFILES` in `.env` is the switch. Anything
   gated that way must also keep `reverseproxy`'s `depends_on` entry
   `required: false` and must not leave a vhost pointing at it — an nginx
   `proxy_pass` to a missing container stops nginx from spawning any worker and
@@ -94,9 +94,11 @@ House rules:
 | ComfyUI | `ainode-comfyui` | `ainode-comfyui:8188` | `http://comfyui.localdomain` |
 | Open WebUI | `ainode-openwebui` | `ainode-openwebui:8080` | `http://openwebui.localdomain` |
 | Strata (opt.) | `ainode-strata` | `ainode-strata:8080` | `http://strata.localdomain` |
+| Hindsight (opt.) | `ainode-hindsight` | `ainode-hindsight:8888` | `http://hindsight.localdomain` |
 
 `chroma` and `kokoro-fastapi` are internal-only; reach them by container name on
-`ainode-internal`.
+`ainode-internal`. `hindsight` also publishes `127.0.0.1:8888` for the host
+(Hermes runs outside Docker and connects with `mode=local_external`).
 
 A hostname whose service is disabled in `COMPOSE_PROFILES` has no vhost at all and
 falls through to the catch-all `00default`, which answers `404` on purpose. A
@@ -192,6 +194,25 @@ after accepting the certificate.
   under `data/comfyui/`.
 - A live ComfyUI session may have work in progress; do not restart it without
   asking.
+
+## Hindsight — agent memory (optional, CPU only)
+
+- LAN URL: `http://hindsight.localdomain`; from the host: `http://127.0.0.1:8888`.
+- CPU only. No `/dev/kfd`, no ROCm, no `x-common-render` — the embedder and
+  reranker are small CPU models and the store is an embedded PostgreSQL (pg0) in
+  `data/hindsight/`. Do not "optimise" it onto a GPU base image.
+- API: `POST /v1/retain`, `POST /v1/recall`, `POST /v1/reflect` (bank in the
+  path); `GET /health` returns `{"status":"healthy","database":"connected",...}`.
+- LLM for extraction comes from `AINODE_HINDSIGHT_LLM_*` in `.env`; the default
+  is the Bonsai 2 router (`ainode-ollama:8080`, model `bonsai2-27b-16k`). Nothing
+  is sent anywhere else unless that base URL is changed.
+- A retain on the local 27B takes seconds to tens of seconds; consolidation runs
+  after it. `AINODE_HINDSIGHT_LOG_LEVEL=debug` when something looks stuck.
+- `AINODE_HINDSIGHT_OBSERVATIONS` must stay `true`: the Hermes plugin recalls the
+  consolidated observation layer only, so with consolidation off every query answers
+  "No relevant memories found" while `stats` shows the facts are there.
+- Restarting is cheap but not free: pg0 needs the 1m `stop_grace_period` to shut
+  down cleanly. Do not `docker kill` it, and do not delete `data/hindsight/`.
 
 ## Verification
 

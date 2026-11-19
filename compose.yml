@@ -396,6 +396,76 @@ services:
       - ./data/common/models:/models:ro
 
   # ============================================================================
+  # Hindsight - agent memory service (retain / recall / reflect)
+  # ============================================================================
+  # Optional. CPU only on purpose: the embedder (112M) and reranker (114M) are
+  # small in-process CPU models and the store is an embedded PostgreSQL (pg0).
+  # It never opens /dev/kfd, so it must not inherit *common-render: running it
+  # on a ROCm base image would add several GB for nothing.
+  #
+  # Upstream ships a self-contained image, so this service is pulled rather than
+  # built, like searxng. The only model it needs is the LLM that extracts facts;
+  # AINODE_HINDSIGHT_LLM_BASE_URL defaults to the Bonsai 2 router in this stack,
+  # which keeps memory text on this machine. Any OpenAI-compatible endpoint
+  # works, including a hosted one.
+  #
+  # Hermes connects with memory.mode=local_external against the API below; its
+  # own client settings live in ~/.hermes/hindsight/config.json, not here.
+  # ============================================================================
+  hindsight:
+    <<: *common
+    profiles: ["hindsight"]
+    image: ghcr.io/vectorize-io/hindsight:${AINODE_HINDSIGHT_TAG:-latest}
+    container_name: ${AINODE_PREFIX:-ainode}-hindsight
+    hostname: ${AINODE_PREFIX:-ainode}-hindsight
+    networks:
+      - ainode-internal
+    ports:
+      # Loopback only by default: the reverse proxy is the LAN entry point, the
+      # same model as SearXNG. Hermes on the host reaches 127.0.0.1:${PORT}.
+      - "${AINODE_HINDSIGHT_BIND:-127.0.0.1}:${AINODE_HINDSIGHT_PORT:-8888}:8888"
+    # pg0 is a real PostgreSQL: give it time to shut down cleanly instead of
+    # Docker's 10 s SIGTERM grace, which would leave a recovery on every stop.
+    stop_grace_period: 1m
+    # Torch plus pg0 plus the embedder; 2 GB is the documented recommendation,
+    # the cap is only here so a runaway job cannot take the host with it.
+    mem_limit: ${AINODE_HINDSIGHT_MEM_LIMIT:-4g}
+    environment:
+      # LLM used for fact extraction, consolidation and reflect.
+      # `openai` is the generic OpenAI-compatible shape (any /v1 endpoint,
+      # custom base URL). `llamacpp` and `ollama` are also valid and tune the
+      # request for those runtimes. The full list is in the image: the process
+      # prints "Must be one of: ..." and exits if this value is wrong.
+      - HINDSIGHT_API_LLM_PROVIDER=${AINODE_HINDSIGHT_LLM_PROVIDER:-openai}
+      - HINDSIGHT_API_LLM_BASE_URL=${AINODE_HINDSIGHT_LLM_BASE_URL:-http://ainode-ollama:8080/v1}
+      - HINDSIGHT_API_LLM_MODEL=${AINODE_HINDSIGHT_LLM_MODEL:-bonsai2-27b-16k}
+      # A keyless local server still runs as the "openai" shape, which the API
+      # refuses without a key, so a placeholder is the default.
+      - HINDSIGHT_API_LLM_API_KEY=${AINODE_HINDSIGHT_LLM_API_KEY:-not-needed}
+      # Small local models do not honour json_object reliably; strict schema
+      # grammar-enforces the response instead of parsing free text.
+      - HINDSIGHT_API_LLM_STRICT_SCHEMA=${AINODE_HINDSIGHT_LLM_STRICT_SCHEMA:-true}
+      # "none" turns thinking off. A reasoning model burns the token budget
+      # before it writes anything, which shows up as an empty extraction.
+      - HINDSIGHT_API_LLM_REASONING_EFFORT=${AINODE_HINDSIGHT_LLM_REASONING_EFFORT:-none}
+      # Local server = one request at a time; parallelism only fights for VRAM.
+      - HINDSIGHT_API_LLM_MAX_CONCURRENT=${AINODE_HINDSIGHT_LLM_MAX_CONCURRENT:-1}
+      - HINDSIGHT_API_LLM_TIMEOUT=${AINODE_HINDSIGHT_LLM_TIMEOUT:-1800}
+      - HINDSIGHT_API_REFLECT_WALL_TIMEOUT=${AINODE_HINDSIGHT_REFLECT_TIMEOUT:-1800}
+      # Observations are the consolidated layer Hermes recalls by default, so
+      # this is not an optional extra: with it off, recall answers "No relevant
+      # memories found" while the facts sit in the bank. See README.
+      - HINDSIGHT_API_ENABLE_OBSERVATIONS=${AINODE_HINDSIGHT_OBSERVATIONS:-true}
+      - HINDSIGHT_API_LOG_LEVEL=${AINODE_HINDSIGHT_LOG_LEVEL:-info}
+    volumes:
+      # Embedded PostgreSQL and the bank itself.
+      - ./data/hindsight:/home/hindsight/.pg0
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          mode: 01777
+
+  # ============================================================================
   # Reverse Proxy (nginx)
   # ============================================================================
   # Routes external traffic to internal services.

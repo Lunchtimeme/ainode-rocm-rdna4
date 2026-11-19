@@ -29,6 +29,7 @@ This repository contains Docker configuration files for setting up the following
 *   **SearXNG (optional profile):** A metasearch engine that aggregates results from multiple search engines, used as a web search backend for Open WebUI.
 *   **Crawl4AI (optional profile):** A self-hosted web extraction API for agents, exposed at `crawl4ai.localdomain`.
 *   **Strata (optional profile):** An alternative local model server with OpenAI- and Anthropic-compatible endpoints. Off by default; enable with the `strata` profile.
+*   **Hindsight (optional profile):** An agent memory service (retain / recall / reflect) backed by an embedded PostgreSQL. CPU only, so it needs no GPU; the LLM that extracts facts is configurable and defaults to the Bonsai 2 router in this stack. Exposed at `hindsight.localdomain`.
 *   **Nginx:** A reverse proxy server, managing incoming requests and routing them to the appropriate backend services.
 
 ## Repository Structure
@@ -200,6 +201,43 @@ your main backend, stop Ollama (`docker compose stop ollama`) and add an **OpenA
 connection in Open WebUI pointing at `http://ainode-strata:8080/v1` with the same
 `STRATA_API_KEY`. Both engines want the same VRAM, so treat them as alternatives and
 run one at a time unless you know the model fits twice.
+
+### Hindsight and the GPU: it does not use one
+
+`hindsight` is the only optional service that is deliberately CPU-only. The
+embedder (112M) and the reranker (114M) run in-process on the CPU, the store is an
+embedded PostgreSQL, and nothing in it opens `/dev/kfd` or needs ROCm. Its image
+is 1.1 GB compressed to pull and 4.1 GB on disk, on a plain `python:3.11-slim`
+base (Debian 13, Python 3.11.18 inside the running container).
+
+That is why it does **not** use `x-common-render`. Running it on a ROCm base to
+"share libraries" would add several GB to a service that would never load them —
+the shared thing between the GPU services here is the PyTorch stack, and Hindsight
+does not need it.
+
+```bash
+# .env
+COMPOSE_PROFILES=searxng,crawl4ai,hindsight
+AINODE_HINDSIGHT_LLM_BASE_URL=http://ainode-ollama:8080/v1
+AINODE_HINDSIGHT_LLM_MODEL=bonsai2-27b-16k
+
+scripts/render-config.sh                 # adds the hindsight.localdomain vhost
+docker compose up -d hindsight
+curl -s http://127.0.0.1:8888/health     # {"status":"healthy","database":"connected",...}
+```
+
+The bank lives in `data/hindsight/` (a bind mount), so it survives rebuilds and
+`docker compose down`. The LLM is the only model-backed part: point
+`AINODE_HINDSIGHT_LLM_BASE_URL` at any OpenAI-compatible endpoint, local or
+hosted. With the default (Bonsai 2 at 16k) memory text never leaves the machine,
+and the 16k preset is the right one — peak consolidation prompt is ~6.5k tokens,
+so the 128k alias only costs VRAM.
+
+Observations — the consolidated layer Hindsight writes on top of raw facts — are on by
+default. Clients such as Hermes recall that layer first, so leaving consolidation off
+produces a bank that is visibly populated (`/stats` shows the facts) and still answers
+"No relevant memories found". Turn it off only for a client configured to recall raw
+types.
 
 ## Updating an existing installation
 
